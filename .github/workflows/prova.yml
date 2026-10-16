@@ -1,0 +1,54 @@
+name: Prova automatica
+
+# A ogni modifica del codice: controlla script e flusso di lavoro e fa girare tutto quello che si puo'
+# provare senza WRF (namelist, stazioni inventate rilette coi formati di WRF, file del mare, mappe da file
+# WRF inventati, movimento della pioggia). Pochi minuti; non tocca le cache di WRF e non pubblica nulla.
+on:
+  push:
+    paths:
+      - "wrf/**"
+      - "previsioni_castelli.py"
+      - ".github/workflows/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prova-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prova:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Strumenti
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gfortran shellcheck
+          pip install -q numpy scipy matplotlib netCDF4 requests pyproj f90nml pyflakes \
+            opencv-python-headless tifffile imagecodecs
+      - name: Flusso di lavoro (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+      - name: Collaudo
+        run: bash wrf/prove.sh "$RUNNER_TEMP/prove"
+      # il radar dipende da un servizio esterno: se non risponde la prova non diventa rossa
+      - name: Radar vero
+        continue-on-error: true
+        run: |
+          python3 wrf/pioggia_radar.py --uscite "$RUNNER_TEMP/prove/sint" --out "$RUNNER_TEMP/prove/mappe" --ciclo 2026101600
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mappe-di-prova
+          path: ${{ runner.temp }}/prove/mappe/
+          retention-days: 3
+          if-no-files-found: ignore

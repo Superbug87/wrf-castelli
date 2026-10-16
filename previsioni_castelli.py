@@ -158,8 +158,6 @@ def _get_json(url, params, validita):
 
 
 def scarica_open_meteo(modello):
-    import requests
-
     lat_c, lon_c = griglia_grossa()
     LA, LO = np.meshgrid(lat_c, lon_c, indexing="ij")
     la, lo = LA.ravel(), LO.ravel()
@@ -217,8 +215,6 @@ def scarica_open_meteo(modello):
 
 
 def quote_reali(lat_f, lon_f):
-    import requests
-
     LA, LO = np.meshgrid(lat_f, lon_f, indexing="ij")
     la, lo = LA.ravel(), LO.ravel()
     out = []

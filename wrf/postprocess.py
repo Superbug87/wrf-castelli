@@ -237,7 +237,6 @@ def main():
     Path(a.out).mkdir(parents=True, exist_ok=True)
 
     tempi_utc, dati, statici, xtrm = carica(a.uscite)
-    nt = len(tempi_utc)
     roma = ZoneInfo("Europe/Rome")
     tempi = [t.replace(tzinfo=timezone.utc).astimezone(roma).replace(tzinfo=None) for t in tempi_utc]
 

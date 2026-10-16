@@ -121,6 +121,10 @@ radar vero (scarico, posizione sulla mappa, movimento su casi inventati e su pio
 CAPE contro MetPy, mappe a partire da file `wrfout` inventati con la stessa struttura di WRF, pubblicazione
 nel ramo `risultati`, sintassi del workflow (actionlint) e degli script (shellcheck).
 
+Queste prove (tranne la compilazione del ramo ECMWF vero) girano da sole a ogni modifica del codice:
+`wrf/prove.sh`, lanciato dal flusso **Prova automatica** (`.github/workflows/prova.yml`, pochi minuti, non tocca le
+cache di WRF). Si può lanciare anche a mano: `bash wrf/prove.sh` (con `PROVA_RADAR=1` prova anche il radar vero).
+
 **Non provato:** compilazione di WRF e WPS sul server di GitHub, download dei dati geografici NCAR, geogrid, metgrid,
 real.exe, wrf.exe.
 Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifact.
@@ -135,5 +139,7 @@ Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifac
 - `wrf/scarica_sst.py` — temperatura del mare MUR nel formato intermedio di WPS (campo `SST`)
 - `wrf/radar.py` — scarico del radar Radar-DPC, posizione sulla mappa, movimento · `wrf/pioggia_radar.py` — verifica e
   pioggia delle prossime 3 ore
-- `wrf/prova_sintetica.py` — file `wrfout` inventati per collaudare le mappe senza WRF
+- `wrf/prova_sintetica.py` — file `wrfout` (e `geo_em`) inventati per collaudare senza WRF · `wrf/prove.sh` — tutte le prove
+  · `wrf/leggi_obs.f90` — rilegge i file delle stazioni con i formati di WRF
+- `.github/workflows/prova.yml` — prova automatica a ogni modifica
 - `previsioni_castelli.py` — mappe e correzione con le stazioni (usato da `postprocess.py`)

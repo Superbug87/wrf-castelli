@@ -5,6 +5,9 @@ postprocess.py senza far girare WRF. Non è una previsione.
 
   python wrf/prova_sintetica.py --out /tmp/sint
   python wrf/postprocess.py --uscite /tmp/sint --out /tmp/sint_mappe --senza-stazioni --da-ora 2026-10-16T08:00
+
+Con --geo CARTELLA scrive anche dei geo_em.d0N.nc inventati (solo posizione e quota, sulla vera geometria dei
+domini di dominio.py), per collaudare stazioni_wrf.py --prova senza geogrid.
 """
 import argparse
 from datetime import datetime, timedelta
@@ -119,11 +122,49 @@ def scrivi(percorso, ore, tempi_utc, lat, lon, hgt, X, Y, xtrm=False):
             PH[i], PHB[i] = 0.0, G0 * s["z_stag"]
 
 
+def geo_finti(cartella):
+    """geo_em.d01/02/03.nc con XLAT_M, XLONG_M e HGT_M, sulla proiezione di Lambert dei domini veri."""
+    import sys
+    from pyproj import Proj, Transformer
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import dominio as D
+
+    lcc = Proj(proj="lcc", lat_1=D.TRUELAT1, lat_2=D.TRUELAT2, lat_0=D.LAT0, lon_0=D.LON0, R=6370000)
+    a_ll = Transformer.from_proj(lcc, "EPSG:4326", always_xy=True)
+    starts = D.parent_starts()
+    origini = []
+    for d in range(3):                                   # angolo sud-ovest di ogni dominio, in metri dal centro
+        if d == 0:
+            origini.append((-D.celle(0) * D.DX[0] / 2,) * 2)
+        else:
+            px, py = origini[d - 1]
+            origini.append((px + (starts[d] - 1) * D.DX[d - 1], py + (starts[d] - 1) * D.DX[d - 1]))
+    Path(cartella).mkdir(parents=True, exist_ok=True)
+    for d in range(3):
+        n = D.celle(d)
+        x = origini[d][0] + (np.arange(n) + 0.5) * D.DX[d]
+        y = origini[d][1] + (np.arange(n) + 0.5) * D.DX[d]
+        X, Y = np.meshgrid(x, y)
+        lon, lat = a_ll.transform(X, Y)
+        hgt = 300 + 500 * np.exp(-((X + 5000) ** 2 + (Y - 4000) ** 2) / (2 * 12000.0 ** 2))
+        with Dataset(Path(cartella) / f"geo_em.d0{d + 1}.nc", "w") as ds:
+            ds.createDimension("Time", 1)
+            ds.createDimension("south_north", n)
+            ds.createDimension("west_east", n)
+            for nome, val in (("XLAT_M", lat), ("XLONG_M", lon), ("HGT_M", hgt)):
+                ds.createVariable(nome, "f4", ("Time", "south_north", "west_east"))[0] = val
+    print("creati i geo_em inventati in", cartella)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="/tmp/sint")
     ap.add_argument("--ciclo", default="2026101600")
+    ap.add_argument("--geo", default="", help="scrive anche dei geo_em.d0N.nc inventati in questa cartella")
     a = ap.parse_args()
+    if a.geo:
+        geo_finti(a.geo)
     c = datetime.strptime(a.ciclo, "%Y%m%d%H")
     lat, lon, hgt, X, Y = griglia()
     for seg, (da, fino) in enumerate([(0, 16), (16, 32), (32, 48)]):       # come i tre segmenti da 16 h
