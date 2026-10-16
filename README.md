@@ -30,7 +30,7 @@ una ogni 6 ore, e le pubblica nel ramo `risultati`.
    `ore` (default 48), `ore_segmento` (default 16), `stazioni` (nudging, sì di default), `mare` (temperatura del mare
    MUR a 1 km, sì di default), `radar` (confronto con il radar e pioggia delle prossime 3 ore, sì di default).
 3. L'avvio automatico (riga `schedule` nel workflow) è attivo dopo la prima esecuzione completa riuscita (16 ottobre 2026): con ECMWF
-   alle 08:40 UTC, quando il ciclo delle 00 UTC è pubblicato (verso le 07:35).
+   alle 08:40 UTC (ciclo delle 00 UTC, pubblicato verso le 07:35) e alle 19:50 UTC (ciclo delle 12 UTC, verso le 19:35).
 
 Tempi **stimati** (non ancora misurati):
 
