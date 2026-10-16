@@ -1,0 +1,41 @@
+name: Prova dati di quota e suolo
+# Controlla solo se il runner raggiunge i dati ad alta risoluzione (quota 30 m, uso del suolo 10 m). Non scarica file grandi.
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  prova:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Raggiungibilita
+        run: |
+          prova() {
+            echo "== $1"
+            curl -sS -L -m 40 -o /dev/null -r 0-1023 -w "  HTTP %{http_code}  %{size_download} byte ricevuti  (%{time_total} s)\n" "$2" || echo "  ERRORE curl $?"
+            curl -sSI -L -m 40 "$2" 2>/dev/null | grep -i -E "^content-length|^content-type" | sed 's/^/  /'
+          }
+          prova "Copernicus DEM 30 m (AWS) N41 E012" "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N41_00_E012_00_DEM/Copernicus_DSM_COG_10_N41_00_E012_00_DEM.tif"
+          prova "SRTM 1 arcsec (AWS Terrain Tiles) N41E012" "https://elevation-tiles-prod.s3.amazonaws.com/skadi/N41/N41E012.hgt.gz"
+          prova "ESA WorldCover 10 m N39E012" "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39E012_Map.tif"
+          prova "Copernicus DEM 30 m (OpenTopography)" "https://opentopography.s3.sdsc.edu/raster/COP30/COP30_hh.vrt"
+      - name: Strumenti per convertire
+        run: |
+          python3 -m pip install --quiet --break-system-packages rasterio numpy 2>&1 | tail -n 2
+          python3 -c "import rasterio; print('rasterio', rasterio.__version__)"
+      - name: Lettura di un pezzo di quota (solo i Castelli)
+        run: |
+          python3 - <<'PY'
+          import rasterio, numpy as np
+          from rasterio.windows import from_bounds
+          u = "/vsicurl/https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N41_00_E012_00_DEM/Copernicus_DSM_COG_10_N41_00_E012_00_DEM.tif"
+          with rasterio.open(u) as s:
+              w = from_bounds(12.45, 41.55, 13.05, 41.90, s.transform)
+              a = s.read(1, window=w)
+              print("COP30 letto:", a.shape, "quota min/max", float(a.min()), float(a.max()), "risoluzione", s.res)
+          u = "/vsicurl/https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39E012_Map.tif"
+          with rasterio.open(u) as s:
+              w = from_bounds(12.45, 41.55, 13.05, 41.90, s.transform)
+              a = s.read(1, window=w)
+              print("WorldCover letto:", a.shape, "classi", sorted(set(np.unique(a).tolist())), "risoluzione", s.res)
+          PY
