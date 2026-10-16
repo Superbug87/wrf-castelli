@@ -20,7 +20,9 @@ import argparse
 import os
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,8 +36,11 @@ SEGRETI = []
 LAT0, LON0 = 41.71, 12.73
 PASSO_MIN = 15                       # minuti: media delle misure ogni 5 minuti in finestre da 15
 
-# quanti punti al massimo per dominio (i fitti vanno tenuti tutti, i rari diradati)
-MAX_D03, MAX_D02, MAX_D01 = 40, 30, 20
+# quanti punti al massimo per dominio: nel dominio a 1 km (Castelli) si usano TUTTE le stazioni trovate,
+# nei due più grandi si dirada (le stazioni rare vanno tenute, le fitte no)
+MAX_D03, MAX_D02, MAX_D01 = 10**6, 30, 20
+PAUSA = 0.2                          # s tra due richieste dello stesso filo (l'API è veloce)
+FILI = 6                             # letture in parallelo
 TOLLERANZA_QUOTA = {3: 250.0, 2: 400.0, 1: 600.0}      # m: quota dichiarata - terreno del modello
 
 
@@ -48,25 +53,24 @@ def pulisci(testo):
 # ---------------------------------------------------------------------------------------------
 # Chiamate a Wunderground (massimo 30 al minuto)
 # ---------------------------------------------------------------------------------------------
-_sessione = None
+_locale = threading.local()
 
 
 def wu_get(url, params, tentativi=4):
     """Ritorna il JSON, None se non ci sono dati (204/404) o il servizio insiste a non rispondere."""
-    global _sessione
     import requests
 
     for i in range(tentativi):
         try:
-            if _sessione is None:
-                _sessione = requests.Session()
-            r = _sessione.get(url, params=params, timeout=60)
+            if getattr(_locale, "sessione", None) is None:
+                _locale.sessione = requests.Session()
+            r = _locale.sessione.get(url, params=params, timeout=60)
         except requests.RequestException as e:
-            _sessione = None
+            _locale.sessione = None
             print(f"Wunderground non risponde ({pulisci(str(e))[:120]}), riprovo", file=sys.stderr)
             time.sleep(5 * (i + 1))
             continue
-        time.sleep(2.1)
+        time.sleep(PAUSA)
         if r.status_code in (204, 404):
             return None
         if r.status_code in (401, 403):
@@ -145,7 +149,7 @@ def cerca(chiave, domini):
     for n in (3, 2, 1):
         d = domini[n]
         box[n] = (d.lat.min(), d.lat.max(), d.lon.min(), d.lon.max())
-    for n, passo in ((3, 0.10), (2, 0.30), (1, 0.80)):
+    for n, passo in ((3, 0.05), (2, 0.30), (1, 0.80)):
         la0, la1, lo0, lo1 = box[n]
         for la in np.arange(la0 + passo / 2, la1, passo):
             for lo in np.arange(lo0 + passo / 2, lo1, passo):
@@ -359,28 +363,34 @@ def main():
 
         stazioni = {}
         motivi = {"senza dati recenti": 0, "quota incoerente": 0, "senza storico": 0}
-        for k, sid in enumerate(scelte, 1):
-            if k % 10 == 0:
-                print(f"  lette {k} stazioni su {len(scelte)}", flush=True)
+
+        def leggi(sid):
+            """(sid, dati stazione) oppure (sid, motivo dello scarto) oppure (sid, None)."""
             att = leggi_attuale(chiave, sid)
             if att is None or adesso - att[3] > timedelta(hours=3):
-                motivi["senza dati recenti"] += 1
-                continue
+                return sid, "senza dati recenti"
             la, lo, quota, _ = att
             n = dominio_fine(domini, la, lo)
             if not n:
-                continue
+                return sid, None
             terreno = domini[n].quota(la, lo)
             if quota is None or not (-50 < quota < 2500):
                 quota = terreno
             elif abs(quota - terreno) > TOLLERANZA_QUOTA[n]:
-                motivi["quota incoerente"] += 1
-                continue
+                return sid, "quota incoerente"
             blocchi = a_blocchi(leggi_giorno(chiave, sid), t0)
             if not blocchi:
-                motivi["senza storico"] += 1
-                continue
-            stazioni[sid] = {"lat": la, "lon": lo, "quota": quota, "dominio": n, "blocchi": blocchi}
+                return sid, "senza storico"
+            return sid, {"lat": la, "lon": lo, "quota": quota, "dominio": n, "blocchi": blocchi}
+
+        with ThreadPoolExecutor(max_workers=FILI) as pool:
+            for k, (sid, esito) in enumerate(pool.map(leggi, scelte), 1):
+                if k % 10 == 0:
+                    print(f"  lette {k} stazioni su {len(scelte)}", flush=True)
+                if isinstance(esito, str):
+                    motivi[esito] += 1
+                elif esito:
+                    stazioni[sid] = esito
         print("Scartate prima del controllo: " + ", ".join(f"{v} {k}" for k, v in motivi.items() if v) +
               f"; restano {len(stazioni)}", flush=True)
 
