@@ -142,10 +142,10 @@ def cerca(chiave, domini):
     """Ogni ricerca dà al massimo 10 stazioni: si ripete su griglie di punti, fitta al centro, rada fuori."""
     trovate = {}
     box = {}
-    for n in (3, 2):
+    for n in (3, 2, 1):
         d = domini[n]
         box[n] = (d.lat.min(), d.lat.max(), d.lon.min(), d.lon.max())
-    for n, passo in ((3, 0.10), (2, 0.30)):
+    for n, passo in ((3, 0.10), (2, 0.30), (1, 0.80)):
         la0, la1, lo0, lo1 = box[n]
         for la in np.arange(la0 + passo / 2, la1, passo):
             for lo in np.arange(lo0 + passo / 2, lo1, passo):
@@ -359,7 +359,9 @@ def main():
 
         stazioni = {}
         motivi = {"senza dati recenti": 0, "quota incoerente": 0, "senza storico": 0}
-        for sid in scelte:
+        for k, sid in enumerate(scelte, 1):
+            if k % 10 == 0:
+                print(f"  lette {k} stazioni su {len(scelte)}", flush=True)
             att = leggi_attuale(chiave, sid)
             if att is None or adesso - att[3] > timedelta(hours=3):
                 motivi["senza dati recenti"] += 1

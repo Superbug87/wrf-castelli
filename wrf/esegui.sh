@@ -100,8 +100,8 @@ modello)
   fi
   python3 "$QUI/config.py" input --ciclo "$CICLO" --da "$DA" --a "$A" "${OBS[@]}" > namelist.input
   rm -f rsl.*
-  echo "== wrf.exe da +${DA} h a +${A} h su $(nproc) processori ($(date -u +%H:%M) UTC)"
-  mpirun -np "$(nproc)" ./wrf.exe > wrf.log 2>&1 || { tail -n 40 wrf.log; esito_wrf rsl.error.0000; exit 1; }
+  echo "== wrf.exe da +${DA} h a +${A} h su $(nproc --all) processori ($(date -u +%H:%M) UTC)"
+  mpirun -np "$(nproc --all)" ./wrf.exe > wrf.log 2>&1 || { tail -n 40 wrf.log; esito_wrf rsl.error.0000; exit 1; }
   esito_wrf rsl.error.0000
   echo "fine ($(date -u +%H:%M) UTC)"
   ls -la wrfout_d03_* wrfrst_d03_* 2>/dev/null | tail -n 8 || true
