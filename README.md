@@ -29,7 +29,7 @@ una ogni 6 ore, e le pubblica nel ramo `risultati`.
 2. Campi: `pilota` (`ecmwf` di default, oppure `gfs`), `ciclo` (vuoto = l'ultimo completo; per ECMWF solo le 00 e le 12 UTC),
    `ore` (default 48), `ore_segmento` (default 16), `stazioni` (nudging, sì di default), `mare` (temperatura del mare
    MUR a 1 km, sì di default), `radar` (confronto con il radar e pioggia delle prossime 3 ore, sì di default).
-3. Dopo la prima esecuzione riuscita si può attivare l'avvio automatico (riga `schedule` nel workflow): con ECMWF
+3. L'avvio automatico (riga `schedule` nel workflow) è attivo dopo la prima esecuzione completa riuscita (16 ottobre 2026): con ECMWF
    alle 08:40 UTC, quando il ciclo delle 00 UTC è pubblicato (verso le 07:35).
 
 Tempi **stimati** (non ancora misurati):

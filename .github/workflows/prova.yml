@@ -24,8 +24,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Strumenti
@@ -45,7 +45,7 @@ jobs:
         continue-on-error: true
         run: |
           python3 wrf/pioggia_radar.py --uscite "$RUNNER_TEMP/prove/sint" --out "$RUNNER_TEMP/prove/mappe" --ciclo 2026101600
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: mappe-di-prova
