@@ -18,6 +18,9 @@ python3 -m pyflakes wrf/*.py previsioni_castelli.py
 passo "script bash"
 shellcheck -S warning wrf/*.sh
 
+passo "compilazione a tappe: avanzamento, tempo massimo e guardiano (comandi inventati)"
+bash wrf/prova_costruzione.sh "$T/costruzione"
+
 passo "domini e namelist (riletti con f90nml)"
 python3 wrf/dominio.py
 python3 - <<'EOF'

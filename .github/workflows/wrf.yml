@@ -47,7 +47,9 @@ env:
   WPS_TAG: v4.7.0
 
 jobs:
-  # 1) WRF e WPS compilati: si fa una volta sola, poi restano in cache
+  # 1) WRF e WPS compilati: si fa una volta sola, poi restano in cache.
+  #    A tappe: se la compilazione non finisce (tempo massimo o blocco) il sorgente parziale va in cache
+  #    e rilanciando si riprende da dove era arrivata. Il log scrive l'avanzamento ogni 5 minuti.
   costruzione:
     runs-on: ubuntu-22.04
     timeout-minutes: 340
@@ -59,18 +61,50 @@ jobs:
         with:
           path: /home/runner/wrf-install
           key: wrf-build-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}
+      - name: Sorgente parziale di una compilazione interrotta
+        id: parziale
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /home/runner/wrf-src
+            /home/runner/jasper
+          key: wrf-src-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            wrf-src-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}-
       - name: Dipendenze di sistema
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash wrf/dipendenze.sh
-      - name: Compilazione (40-90 minuti la prima volta)
+      - name: "Tappa 1: JasPer, sorgenti, configure"
         if: steps.cache.outputs.cache-hit != 'true'
-        run: bash wrf/costruisci.sh
+        run: bash wrf/costruisci.sh prepara
+      - name: "Tappa 2: compilazione di WRF (40-90 minuti la prima volta, avanzamento nel log)"
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash wrf/costruisci.sh wrf
+      - name: "Tappa 3: compilazione di WPS"
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash wrf/costruisci.sh wps
+      - name: "Tappa 4: installazione"
+        id: installa
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash wrf/costruisci.sh installa
+      # Se la compilazione non è arrivata in fondo si salva il sorgente parziale; la cache finale la salva da sola
+      # actions/cache@v4 a fine lavoro, ma solo se tutto è andato bene
+      - name: Salvo il sorgente parziale
+        if: ${{ always() && steps.cache.outputs.cache-hit != 'true' && steps.installa.conclusion != 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /home/runner/wrf-src
+            /home/runner/jasper
+          key: ${{ steps.parziale.outputs.cache-primary-key }}
       - name: Log di compilazione
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: log-compilazione
           path: |
+            /home/runner/wrf-src/diagnosi.txt
             /home/runner/wrf-src/WRF/configure.log
             /home/runner/wrf-src/WRF/compile.log
             /home/runner/wrf-src/WPS/configure.log

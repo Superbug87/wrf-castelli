@@ -45,6 +45,16 @@ Tempi **stimati** (non ancora misurati):
 GitHub ferma ogni job dopo 6 ore, per questo la previsione è divisa in segmenti che ripartono dal *restart*
 del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 segmenti) o `ore`.
 
+**La compilazione è a tappe** (`wrf/costruisci.sh prepara|wrf|wps|installa`, quattro passi del job `costruzione`):
+- mentre WRF compila, il log scrive ogni 5 minuti a che punto è (oggetti compilati, ultimo file, carico, memoria);
+- se in 30 minuti non cambia nulla (né file compilati né righe di log) un guardiano stampa quali processi sono rimasti
+  appesi, salva la diagnosi (`diagnosi.txt`, tra gli allegati `log-compilazione`) e ferma il job invece di lasciarlo girare
+  fino al limite;
+- c'è un tempo massimo di 290 minuti per WRF: se scade, il sorgente parziale (con gli oggetti già compilati) va in cache
+  e **rilanciando il flusso la compilazione riprende da lì**, senza ricominciare;
+- la cache finale (`wrf-install`) si salva solo se tutte e quattro le tappe finiscono; quella parziale (`wrf-src`) si salva
+  anche se si interrompe.
+
 ## Dove trovo i risultati
 - Ramo **`risultati`** del repository: la cartella `ultimo/` e il suo `README.md` con tutte le immagini
   (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 14 giorni.
@@ -128,11 +138,15 @@ cache di WRF). Si può lanciare anche a mano: `bash wrf/prove.sh` (con `PROVA_RA
 **Non provato:** compilazione di WRF e WPS sul server di GitHub, download dei dati geografici NCAR, geogrid, metgrid,
 real.exe, wrf.exe.
 Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifact.
+Un primo tentativo di compilazione (16 ottobre 2026) è rimasto oltre 4 ore nello step di compilazione, contro le 40-90
+minuti attese, ed è stato annullato: il log di un job in corso non si può leggere, quindi la causa non è nota. Da qui la
+compilazione a tappe con avanzamento e guardiano. Le funzioni di avanzamento, tempo massimo e guardiano sono provate con
+comandi inventati (`wrf/prova_costruzione.sh`); la compilazione vera su GitHub non ancora.
 
 ## File
 - `.github/workflows/wrf.yml` — il flusso automatico
 - `wrf/dominio.py` — geometria dei tre domini · `wrf/config.py` — namelist di WPS e WRF
-- `wrf/dipendenze.sh`, `costruisci.sh`, `statico.sh`, `esegui.sh`, `pubblica.sh`
+- `wrf/dipendenze.sh`, `costruisci.sh` (a tappe, con avanzamento e guardiano), `statico.sh`, `esegui.sh`, `pubblica.sh`
 - `wrf/scarica_ecmwf.py` + `wrf/Vtable.ECMWF_OD` — dati ECMWF · `wrf/scarica_gfs.py` — alternativa GFS
 - `wrf/postprocess.py` — da `wrfout` alle mappe
 - `wrf/stazioni_wrf.py` — stazioni Wunderground nel formato di WRF per il nudging
@@ -140,6 +154,7 @@ Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifac
 - `wrf/radar.py` — scarico del radar Radar-DPC, posizione sulla mappa, movimento · `wrf/pioggia_radar.py` — verifica e
   pioggia delle prossime 3 ore
 - `wrf/prova_sintetica.py` — file `wrfout` (e `geo_em`) inventati per collaudare senza WRF · `wrf/prove.sh` — tutte le prove
-  · `wrf/leggi_obs.f90` — rilegge i file delle stazioni con i formati di WRF
+  · `wrf/leggi_obs.f90` — rilegge i file delle stazioni con i formati di WRF · `wrf/prova_costruzione.sh` — prova
+  avanzamento, tempo massimo e guardiano della compilazione con comandi inventati
 - `.github/workflows/prova.yml` — prova automatica a ogni modifica
 - `previsioni_castelli.py` — mappe e correzione con le stazioni (usato da `postprocess.py`)
