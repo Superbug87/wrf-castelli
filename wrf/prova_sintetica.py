@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""
+Crea file wrfout_d03_* e wrfxtrm_d03_* INVENTATI (stessa struttura di quelli di WRF) per collaudare
+postprocess.py senza far girare WRF. Non è una previsione.
+
+  python wrf/prova_sintetica.py --out /tmp/sint
+  python wrf/postprocess.py --uscite /tmp/sint --out /tmp/sint_mappe --senza-stazioni --da-ora 2026-10-16T08:00
+"""
+import argparse
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+from netCDF4 import Dataset
+
+G0, RD = 9.80665, 287.04
+NX = NY = 61
+NZ = 39
+LAT0, LON0 = 41.71, 12.73
+ANGOLO = np.radians(1.5)                       # rotazione tra griglia di WRF e nord
+
+
+def griglia():
+    x = (np.arange(NX) - NX // 2) * 1.0         # km
+    X, Y = np.meshgrid(x, x)
+    lat = LAT0 + Y / 111.32
+    lon = LON0 + X / (111.32 * np.cos(np.radians(lat)))
+    hgt = (850 * np.exp(-((X + 1) ** 2 + (Y - 4) ** 2) / (2 * 7.0 ** 2))
+           + 120 * (X / 30 + 1) + 40 * np.exp(-((X - 20) ** 2 + (Y + 10) ** 2) / (2 * 6.0 ** 2)))
+    return lat, lon, np.clip(hgt, 0, None), X, Y
+
+
+def stato(h, lat, lon, hgt, X, Y):
+    """Campi 2D e 3D inventati all'ora h dall'inizio (00 UTC)."""
+    ora_solare = (h + 1) % 24
+    diurno = np.sin(2 * np.pi * (ora_solare - 9) / 24)
+    instabile = np.clip(np.sin(np.pi * (ora_solare - 10) / 8), 0, 1)       # pomeriggio più instabile
+    T2 = 291.0 + 5.0 * diurno - 0.0065 * hgt + 0.8 * np.sin(X / 9.0) * np.cos(Y / 7.0)
+    td = T2 - 6.0 + 2 * instabile
+    e = 611.2 * np.exp(17.62 * (td - 273.15) / (td - 273.15 + 243.12))
+    PSFC = (101800.0 - 120 * np.sin(h / 14.0)) * np.exp(-hgt / 8300.0)
+    Q2 = 0.622 * e / (PSFC - e)
+    spinta = 1 + 0.0006 * (hgt - hgt.mean())
+    vel = (3.0 + 2.0 * np.sin(h / 7.0) + 2.0 * instabile) * spinta
+    dirz = np.radians(200 + 70 * np.sin(h / 17.0))
+    ue, ve = -vel * np.sin(dirz), -vel * np.cos(dirz)
+    U10 = ue * np.cos(ANGOLO) + ve * np.sin(ANGOLO)                        # in assi di griglia
+    V10 = ve * np.cos(ANGOLO) - ue * np.sin(ANGOLO)
+
+    gamma = 6.3e-3 + 0.9e-3 * instabile
+    eta = np.linspace(1.0, 0.0, NZ + 1) ** 1.35
+    p_stag = 5000.0 + eta[:, None, None] * (PSFC - 5000.0)[None]
+    z_stag = np.zeros_like(p_stag)
+    z_stag[0] = hgt
+    T_stag = np.zeros_like(p_stag)
+    T_stag[0] = T2
+    for k in range(1, NZ + 1):
+        Tk = T_stag[k - 1].copy()
+        for _ in range(3):
+            Tm = 0.5 * (T_stag[k - 1] + Tk)
+            dz = RD * Tm / G0 * np.log(p_stag[k - 1] / p_stag[k])
+            Tk = T_stag[k - 1] - gamma * dz * (z_stag[k - 1] + dz < 11000) - 0.0 * dz
+        z_stag[k] = z_stag[k - 1] + RD * 0.5 * (T_stag[k - 1] + Tk) / G0 * np.log(p_stag[k - 1] / p_stag[k])
+        T_stag[k] = Tk
+    p = 0.5 * (p_stag[:-1] + p_stag[1:])
+    tk = 0.5 * (T_stag[:-1] + T_stag[1:])
+    z_m = 0.5 * (z_stag[:-1] + z_stag[1:])
+    rh = np.clip(0.8 - 0.55 * (z_m - hgt) / 9000.0, 0.15, 0.8)
+    es = 611.2 * np.exp(17.62 * (tk - 273.15) / (tk - 273.15 + 243.12))
+    qv = rh * 0.622 * es / (p - es)
+    qv[0] = Q2
+    th = tk * (1e5 / p) ** (RD / 1004.0)
+    return dict(T2=T2, Q2=Q2, PSFC=PSFC, U10=U10, V10=V10, p=p, th=th, qv=qv, z_stag=z_stag, vel=vel)
+
+
+def pioggia_cumulata(h, X, Y):
+    """Un temporale inventato nell'angolo sud-ovest da h=30 a h=40."""
+    attivo = np.clip((h - 30) / 10.0, 0, 1)
+    macchia = np.exp(-((X + 22) ** 2 + (Y + 24) ** 2) / (2 * 9.0 ** 2))
+    return 14.0 * attivo ** 1.3 * macchia
+
+
+def scrivi(percorso, ore, tempi_utc, lat, lon, hgt, X, Y, xtrm=False):
+    with Dataset(percorso, "w") as ds:
+        ds.createDimension("Time", None)
+        ds.createDimension("DateStrLen", 19)
+        ds.createDimension("west_east", NX)
+        ds.createDimension("south_north", NY)
+        if xtrm:
+            v = ds.createVariable("SPDUV10MAX", "f4", ("Time", "south_north", "west_east"))
+            tv = ds.createVariable("Times", "S1", ("Time", "DateStrLen"))
+            for i, (h, t) in enumerate(zip(ore, tempi_utc)):
+                s = stato(h, lat, lon, hgt, X, Y)
+                ue = np.hypot(s["U10"], s["V10"])
+                v[i] = ue * 1.15
+                tv[i] = np.array(list(t.strftime("%Y-%m-%d_%H:%M:%S")), dtype="S1")
+            return
+        ds.createDimension("bottom_top", NZ)
+        ds.createDimension("bottom_top_stag", NZ + 1)
+        ds.setncattr("USE_THETA_M", 0)
+        f2 = lambda n: ds.createVariable(n, "f4", ("Time", "south_north", "west_east"))
+        f3 = lambda n, d="bottom_top": ds.createVariable(n, "f4", ("Time", d, "south_north", "west_east"))
+        tv = ds.createVariable("Times", "S1", ("Time", "DateStrLen"))
+        var2 = {n: f2(n) for n in ("XLAT", "XLONG", "HGT", "T2", "Q2", "PSFC", "U10", "V10", "COSALPHA",
+                                  "SINALPHA", "RAINC", "RAINNC")}
+        P, PB, T, QV = f3("P"), f3("PB"), f3("T"), f3("QVAPOR")
+        PH, PHB = f3("PH", "bottom_top_stag"), f3("PHB", "bottom_top_stag")
+        for i, (h, t) in enumerate(zip(ore, tempi_utc)):
+            s = stato(h, lat, lon, hgt, X, Y)
+            tv[i] = np.array(list(t.strftime("%Y-%m-%d_%H:%M:%S")), dtype="S1")
+            var2["XLAT"][i], var2["XLONG"][i], var2["HGT"][i] = lat, lon, hgt
+            for n in ("T2", "Q2", "PSFC", "U10", "V10"):
+                var2[n][i] = s[n]
+            var2["COSALPHA"][i], var2["SINALPHA"][i] = np.cos(ANGOLO), np.sin(ANGOLO)
+            pioggia = pioggia_cumulata(h, X, Y)
+            var2["RAINC"][i], var2["RAINNC"][i] = 0.6 * pioggia, 0.4 * pioggia
+            P[i], PB[i] = 0.0, s["p"]
+            T[i], QV[i] = s["th"] - 300.0, s["qv"]
+            PH[i], PHB[i] = 0.0, G0 * s["z_stag"]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", default="/tmp/sint")
+    ap.add_argument("--ciclo", default="2026101600")
+    a = ap.parse_args()
+    c = datetime.strptime(a.ciclo, "%Y%m%d%H")
+    lat, lon, hgt, X, Y = griglia()
+    for seg, (da, fino) in enumerate([(0, 16), (16, 32), (32, 48)]):       # come i tre segmenti da 16 h
+        cart = Path(a.out) / f"uscite-{seg}"
+        cart.mkdir(parents=True, exist_ok=True)
+        ore = list(range(da, fino + 1))
+        tempi = [c + timedelta(hours=h) for h in ore]
+        nome = tempi[0].strftime("%Y-%m-%d_%H:%M:%S")
+        scrivi(cart / f"wrfout_d03_{nome}", ore, tempi, lat, lon, hgt, X, Y)
+        scrivi(cart / f"wrfxtrm_d03_{nome}", ore, tempi, lat, lon, hgt, X, Y, xtrm=True)
+        print("creati i file del segmento", seg, "da", nome)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,245 @@
+name: Previsione WRF Castelli Romani
+
+on:
+  # schedule:                    # da riattivare quando la prima esecuzione manuale è andata a buon fine
+  #   - cron: "10 5 * * *"       # ogni giorno alle 05:10 UTC, quando il ciclo delle 00 UTC è completo
+  workflow_dispatch:
+    inputs:
+      ciclo:
+        description: "Ciclo GFS AAAAMMGGHH (vuoto = l'ultimo completo)"
+        required: false
+        default: ""
+      ore:
+        description: "Ore di previsione (multiplo di 3, da 3 a 48)"
+        required: false
+        default: "48"
+      ore_segmento:
+        description: "Ore calcolate da ogni job (GitHub ferma i job a 6 ore); al massimo 4 segmenti"
+        required: false
+        default: "16"
+
+permissions:
+  contents: write                 # serve a pubblicare le immagini nel ramo "risultati"
+
+concurrency:
+  group: wrf
+  cancel-in-progress: false
+
+env:
+  WRF_TAG: v4.7.0
+  WPS_TAG: v4.7.0
+
+jobs:
+  # 1) WRF e WPS compilati: si fa una volta sola, poi restano in cache
+  costruzione:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache di WRF e WPS compilati
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/wrf-install
+          key: wrf-build-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}
+      - name: Dipendenze di sistema
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash wrf/dipendenze.sh
+      - name: Compilazione (40-90 minuti la prima volta)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash wrf/costruisci.sh
+      - name: Log di compilazione
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-compilazione
+          path: |
+            /home/runner/wrf-src/WRF/configure.log
+            /home/runner/wrf-src/WRF/compile.log
+            /home/runner/wrf-src/WPS/configure.log
+            /home/runner/wrf-src/WPS/compile.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 2) Terreno e uso del suolo dei tre domini (geogrid): si fa una volta sola, restano pochi MB in cache
+  statico:
+    needs: costruzione
+    runs-on: ubuntu-22.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache dei dati statici
+        id: geo
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/wrf-geo
+          key: wrf-geo-${{ hashFiles('wrf/dominio.py', 'wrf/statico.sh') }}
+      - name: Recupero WRF e WPS compilati
+        if: steps.geo.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/wrf-install
+          key: wrf-build-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}
+          fail-on-cache-miss: true
+      - name: Dipendenze di sistema
+        if: steps.geo.outputs.cache-hit != 'true'
+        run: bash wrf/dipendenze.sh
+      - name: Dati geografici e geogrid
+        if: steps.geo.outputs.cache-hit != 'true'
+        run: bash wrf/statico.sh
+      - name: Log di geogrid
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-geogrid
+          path: /home/runner/lavoro-geogrid/geogrid.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 3) Quale ciclo GFS e quante ore
+  pianifica:
+    runs-on: ubuntu-22.04
+    outputs:
+      ciclo: ${{ steps.p.outputs.ciclo }}
+      ore: ${{ steps.p.outputs.ore }}
+      seg: ${{ steps.p.outputs.seg }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scelta del ciclo
+        id: p
+        env:
+          IN_CICLO: ${{ github.event.inputs.ciclo }}
+          IN_ORE: ${{ github.event.inputs.ore }}
+          IN_SEG: ${{ github.event.inputs.ore_segmento }}
+        run: |
+          pip install -q requests
+          ORE=${IN_ORE:-48}; SEG=${IN_SEG:-16}
+          case "$ORE$SEG" in *[!0-9]*) echo "ore e ore_segmento devono essere numeri"; exit 1;; esac
+          if [ $((ORE % 3)) -ne 0 ] || [ "$ORE" -lt 3 ] || [ "$ORE" -gt 48 ]; then echo "ore: multiplo di 3 tra 3 e 48"; exit 1; fi
+          if [ "$SEG" -lt 1 ] || [ $(( (ORE + SEG - 1) / SEG )) -gt 4 ]; then echo "servono al massimo 4 segmenti: alza ore_segmento"; exit 1; fi
+          CICLO=${IN_CICLO}
+          if [ -z "$CICLO" ]; then CICLO=$(python3 wrf/scarica_gfs.py --ore "$ORE" --solo-ciclo); fi
+          { echo "ciclo=$CICLO"; echo "ore=$ORE"; echo "seg=$SEG"; } >> "$GITHUB_OUTPUT"
+          echo "Ciclo $CICLO, $ORE ore, segmenti da $SEG ore"
+
+  # 4) La previsione, a segmenti in fila (un job non può durare più di 6 ore)
+  previsione:
+    needs: [pianifica, costruzione, statico]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    strategy:
+      max-parallel: 1             # i segmenti girano uno dopo l'altro, nell'ordine
+      fail-fast: true
+      matrix:
+        include:
+          - { seg: 0, prev: 0 }
+          - { seg: 1, prev: 0 }
+          - { seg: 2, prev: 1 }
+          - { seg: 3, prev: 2 }
+    env:
+      CICLO: ${{ needs.pianifica.outputs.ciclo }}
+      ORE: ${{ needs.pianifica.outputs.ore }}
+      SEG: ${{ needs.pianifica.outputs.seg }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Questo segmento serve?
+        id: s
+        run: |
+          DA=$(( ${{ matrix.seg }} * SEG )); A=$(( DA + SEG ))
+          [ "$A" -gt "$ORE" ] && A=$ORE
+          ATTIVO=false; [ "$DA" -lt "$ORE" ] && ATTIVO=true
+          { echo "attivo=$ATTIVO"; echo "da=$DA"; echo "a=$A"; } >> "$GITHUB_OUTPUT"
+          echo "segmento ${{ matrix.seg }}: da +$DA h a +$A h (attivo: $ATTIVO)"
+      - name: Recupero WRF e WPS compilati
+        if: steps.s.outputs.attivo == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/wrf-install
+          key: wrf-build-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}
+          fail-on-cache-miss: true
+      - name: Recupero i dati statici
+        if: steps.s.outputs.attivo == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/wrf-geo
+          key: wrf-geo-${{ hashFiles('wrf/dominio.py', 'wrf/statico.sh') }}
+          fail-on-cache-miss: true
+      - name: Dipendenze
+        if: steps.s.outputs.attivo == 'true'
+        run: |
+          bash wrf/dipendenze.sh
+          pip install -q requests netCDF4 numpy
+      - name: GFS, ungrib, metgrid, real (solo primo segmento)
+        if: steps.s.outputs.attivo == 'true' && matrix.seg == 0
+        run: bash wrf/esegui.sh prepara "$CICLO" "$ORE"
+      - name: Stato del segmento precedente
+        if: steps.s.outputs.attivo == 'true' && matrix.seg > 0
+        uses: actions/download-artifact@v4
+        with:
+          name: stato-${{ matrix.prev }}
+          path: /home/runner/lavoro
+      - name: WRF
+        if: steps.s.outputs.attivo == 'true'
+        run: bash wrf/esegui.sh modello "$CICLO" "${{ steps.s.outputs.da }}" "${{ steps.s.outputs.a }}"
+      - name: Salvo lo stato per il segmento dopo
+        if: steps.s.outputs.attivo == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stato-${{ matrix.seg }}
+          path: /home/runner/lavoro/stato.tgz
+          retention-days: 2
+      - name: Salvo le uscite del dominio a 1 km
+        if: steps.s.outputs.attivo == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uscite-${{ matrix.seg }}
+          path: /home/runner/lavoro/uscite.tgz
+          retention-days: 3
+      - name: Log (solo se qualcosa è andato storto)
+        if: failure() && steps.s.outputs.attivo == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-segmento-${{ matrix.seg }}
+          path: |
+            /home/runner/lavoro/run/namelist.input
+            /home/runner/lavoro/run/real.log
+            /home/runner/lavoro/run/wrf.log
+            /home/runner/lavoro/run/rsl.error.0000
+            /home/runner/lavoro/run/rsl.out.0000
+            /home/runner/lavoro/WPS/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 5) Le mappe
+  mappe:
+    needs: [pianifica, previsione]
+    if: ${{ !cancelled() && needs.previsione.result == 'success' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Librerie Python
+        run: pip install -q numpy scipy matplotlib netCDF4 requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: uscite-*
+          path: uscite
+      - name: Scompatto
+        run: for t in uscite/*/uscite.tgz; do tar -xzf "$t" -C "$(dirname "$t")"; done
+      - name: Mappe (con la correzione delle stazioni se c'è la chiave)
+        env:
+          WU_API_KEY: ${{ secrets.WU_API_KEY }}
+          CICLO: ${{ needs.pianifica.outputs.ciclo }}
+        run: python3 wrf/postprocess.py --uscite uscite --out mappe --ciclo "$CICLO"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mappe
+          path: mappe/*.png
+          retention-days: 14
+      - name: Pubblico nel ramo risultati
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CICLO: ${{ needs.pianifica.outputs.ciclo }}
+        run: bash wrf/pubblica.sh mappe "$CICLO"
