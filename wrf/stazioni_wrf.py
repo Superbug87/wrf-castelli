@@ -5,7 +5,8 @@ Stazioni Weather Underground -> file delle osservazioni per il nudging di WRF (O
   WU_API_KEY=... stazioni_wrf.py --ciclo 2026101600 --geo ~/wrf-geo --out run
 
 Cosa fa:
-  1. cerca le stazioni intorno ai Castelli Romani (fitte nel dominio a 1 km, più rade nei due più grandi);
+  1. cerca le stazioni intorno ai Castelli Romani: TUTTE nel dominio a 1 km (ricerca a riquadri che si dividono,
+     in parallelo, ~40 chiamate/s; WU_CHIAMATE_AL_SECONDO e WU_THREAD le regolano), più rade nei due più grandi;
   2. di ognuna legge la posizione/quota attuale e lo storico delle ultime 24 ore (dati ogni 5 minuti);
   3. controlla i dati (valori plausibili, quota dichiarata coerente col terreno di WRF, scarto dalle stazioni
      vicine riportate alla stessa quota) e li riduce a una media ogni 15 minuti;
@@ -39,8 +40,13 @@ PASSO_MIN = 15                       # minuti: media delle misure ogni 5 minuti 
 # quanti punti al massimo per dominio: nel dominio a 1 km (Castelli) si usano TUTTE le stazioni trovate,
 # nei due più grandi si dirada (le stazioni rare vanno tenute, le fitte no)
 MAX_D03, MAX_D02, MAX_D01 = 10**6, 30, 20
-PAUSA = 0.2                          # s tra due richieste dello stesso filo (l'API è veloce)
-FILI = 6                             # letture in parallelo
+CHIAMATE_AL_SECONDO = float(os.environ.get("WU_CHIAMATE_AL_SECONDO", "40"))
+THREAD = int(os.environ.get("WU_THREAD", "24"))
+ETA_MASSIMA_ELENCO = timedelta(hours=48)    # dall'elenco della ricerca si scartano solo le stazioni mute da due giorni
+ETA_MASSIMA_DATO = timedelta(hours=3)       # l'ultimo dato letto deve essere di meno di 3 ore fa
+LATO_INIZIALE = 0.15                        # gradi: riquadri di partenza della ricerca nel dominio a 1 km
+LATO_MINIMO = 0.005                         # gradi: sotto questo (circa mezzo km) non si suddivide più
+MAX_RICERCHE = 8000                         # rete di sicurezza
 TOLLERANZA_QUOTA = {3: 250.0, 2: 400.0, 1: 600.0}      # m: quota dichiarata - terreno del modello
 
 
@@ -53,7 +59,39 @@ def pulisci(testo):
 # ---------------------------------------------------------------------------------------------
 # Chiamate a Wunderground (massimo 30 al minuto)
 # ---------------------------------------------------------------------------------------------
+
+
+class Limitatore:
+    """Distanzia le chiamate di tutti i thread (al massimo `al_secondo`) e permette una pausa generale."""
+
+    def __init__(self, al_secondo):
+        self.passo = 1.0 / max(al_secondo, 0.1)
+        self.prossimo = 0.0
+        self.fino_a = 0.0
+        self.lucchetto = threading.Lock()
+
+    def aspetta(self):
+        with self.lucchetto:
+            ora = time.monotonic()
+            inizio = max(ora, self.prossimo, self.fino_a)
+            self.prossimo = inizio + self.passo
+        if inizio > ora:
+            time.sleep(inizio - ora)
+
+    def pausa(self, secondi):
+        with self.lucchetto:
+            self.fino_a = max(self.fino_a, time.monotonic() + secondi)
+
+
+LIMITE = Limitatore(CHIAMATE_AL_SECONDO)
 _locale = threading.local()
+_stato = {"di_fila": 0, "esaurita": False, "chiamate": 0}
+_lucchetto_stato = threading.Lock()
+
+
+def troppe_richieste():
+    """True se il servizio ha rifiutato più volte di fila: da qui in poi non si chiama più."""
+    return _stato["esaurita"]
 
 
 def wu_get(url, params, tentativi=4):
@@ -61,6 +99,9 @@ def wu_get(url, params, tentativi=4):
     import requests
 
     for i in range(tentativi):
+        if _stato["esaurita"]:
+            return None
+        LIMITE.aspetta()
         try:
             if getattr(_locale, "sessione", None) is None:
                 _locale.sessione = requests.Session()
@@ -68,24 +109,39 @@ def wu_get(url, params, tentativi=4):
         except requests.RequestException as e:
             _locale.sessione = None
             print(f"Wunderground non risponde ({pulisci(str(e))[:120]}), riprovo", file=sys.stderr)
-            time.sleep(5 * (i + 1))
+            time.sleep(3 * (i + 1))
             continue
-        time.sleep(PAUSA)
+        with _lucchetto_stato:
+            _stato["chiamate"] += 1
         if r.status_code in (204, 404):
             return None
         if r.status_code in (401, 403):
             sys.exit(f"Wunderground rifiuta la chiave (HTTP {r.status_code}): controlla il segreto WU_API_KEY.")
-        if r.status_code in (429, 500, 502, 503, 504):
-            attesa = int(r.headers.get("Retry-After", 0) or 0) or 20 * (i + 1)
-            print(f"Wunderground risponde {r.status_code}, aspetto {attesa} s", file=sys.stderr)
-            time.sleep(attesa)
+        if r.status_code == 429:
+            with _lucchetto_stato:
+                _stato["di_fila"] += 1
+                if _stato["di_fila"] >= 4 and not _stato["esaurita"]:
+                    _stato["esaurita"] = True
+                    print("Wunderground rifiuta ancora per troppe richieste: smetto di chiamare "
+                          "(limite giornaliero?) e uso quel che ho.", file=sys.stderr)
+            attesa = min(int(r.headers.get("Retry-After", 0) or 0) or 20 * (i + 1), 120)
+            print(f"Wunderground risponde 429, pausa generale di {attesa} s", file=sys.stderr)
+            LIMITE.pausa(attesa)
+            continue
+        if r.status_code in (500, 502, 503, 504):
+            time.sleep(5 * (i + 1))
             continue
         try:
             r.raise_for_status()
-            return r.json()
+            dati = r.json()
         except (requests.RequestException, ValueError):
             return None
+        _stato["di_fila"] = 0
+        return dati
     return None
+
+
+# ---------------------------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------------------------
@@ -142,27 +198,110 @@ def dominio_fine(domini, lat, lon):
 # ---------------------------------------------------------------------------------------------
 # Ricerca e lettura delle stazioni
 # ---------------------------------------------------------------------------------------------
-def cerca(chiave, domini):
-    """Ogni ricerca dà al massimo 10 stazioni: si ripete su griglie di punti, fitta al centro, rada fuori."""
-    trovate = {}
-    box = {}
-    for n in (3, 2, 1):
-        d = domini[n]
-        box[n] = (d.lat.min(), d.lat.max(), d.lon.min(), d.lon.max())
-    for n, passo in ((3, 0.05), (2, 0.30), (1, 0.80)):
-        la0, la1, lo0, lo1 = box[n]
-        for la in np.arange(la0 + passo / 2, la1, passo):
-            for lo in np.arange(lo0 + passo / 2, lo1, passo):
-                p = {"geocode": f"{la:.4f},{lo:.4f}", "product": "pws", "format": "json", "apiKey": chiave}
-                r = wu_get(URL_VICINE, p)
-                try:
-                    loc = r["location"]
-                    for sid, sla, slo in zip(loc["stationId"], loc["latitude"], loc["longitude"]):
-                        if sid and sla is not None and slo is not None:
-                            trovate[sid] = (float(sla), float(slo))
-                except (KeyError, TypeError):
+def _km(la, lo, la_c, lo_c):
+    return np.hypot((la - la_c) * 111.19, (lo - lo_c) * 111.19 * np.cos(np.radians(la_c)))
+
+
+def _coperta(cella, dischi):
+    """True se il riquadro sta tutto dentro uno dei cerchi già interrogati (un cerchio è convesso: bastano i 4 angoli)."""
+    cla, clo, r = dischi
+    if len(cla) == 0:
+        return False
+    a, b, c, d = cella
+    dentro = np.ones(len(cla), bool)
+    for la in (a, b):
+        for lo in (c, d):
+            dentro &= _km(la, lo, cla, clo) <= r * 0.97
+    return bool(dentro.any())
+
+
+def _tocca(dominio, cella):
+    a, b, c, d = cella
+    return any(dominio.contiene(la, lo) for la, lo in ((a, c), (a, d), (b, c), (b, d), ((a + b) / 2, (c + d) / 2)))
+
+
+def vicine_a(chiave, la, lo):
+    """Le (fino a) 10 stazioni più vicine al punto: ([(id, lat, lon, ultimo aggiornamento)], raggio coperto in km) o None."""
+    p = {"geocode": f"{la:.5f},{lo:.5f}", "product": "pws", "format": "json", "apiKey": chiave}
+    r = wu_get(URL_VICINE, p)
+    try:
+        loc = r["location"]
+        agg = loc.get("updateTimeUtc") or [None] * len(loc["stationId"])
+        elenco = []
+        for sid, sla, slo, t in zip(loc["stationId"], loc["latitude"], loc["longitude"], agg):
+            if sid and sla is not None and slo is not None:
+                elenco.append((sid, float(sla), float(slo), t))
+        dist = [d for d in loc.get("distanceKm", []) if d is not None]
+        raggio = max(dist) if len(elenco) >= 10 and dist else float("inf")
+        return elenco, raggio
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def cerca_fitta(chiave, dominio, adesso):
+    """
+    Tutte le stazioni nell'area di un dominio. Ogni ricerca dà le 10 stazioni più vicine al punto: dentro il cerchio che arriva
+    alla decima non ne manca nessuna. Si parte da riquadri grandi e, se il cerchio non li copre, si dividono in 4 (a ondate,
+    in parallelo), saltando i riquadri già coperti. Ritorna {id: (lat, lon)} e un riassunto.
+    """
+    d3 = dominio
+    la0, la1, lo0, lo1 = d3.lat.min(), d3.lat.max(), d3.lon.min(), d3.lon.max()
+    lato = LATO_INIZIALE
+    celle = [(a, a + lato, b, b + lato) for a in np.arange(la0 - lato / 2, la1, lato) for b in np.arange(lo0 - lato / 2, lo1, lato)]
+    celle = [c for c in celle if _tocca(d3, c)]
+    trovate, dischi_l = {}, []
+    ricerche = fallite = non_esaurite = 0
+    limite_eta = adesso - ETA_MASSIMA_ELENCO
+    vecchie = 0
+    with ThreadPoolExecutor(THREAD) as pool:
+        while celle and not troppe_richieste():
+            dischi = tuple(np.array(x) for x in zip(*dischi_l)) if dischi_l else (np.array([]),) * 3
+            da_fare = [c for c in celle if not _coperta(c, dischi)]
+            if ricerche + len(da_fare) > MAX_RICERCHE:
+                print(f"!! Ricerca interrotta a {ricerche} interrogazioni (rete di sicurezza)", file=sys.stderr)
+                break
+            centri = [((c[0] + c[1]) / 2, (c[2] + c[3]) / 2) for c in da_fare]
+            risposte = list(pool.map(lambda x: vicine_a(chiave, *x), centri))
+            ricerche += len(da_fare)
+            prossime = []
+            for cella, (cla, clo), ris in zip(da_fare, centri, risposte):
+                if ris is None:
+                    fallite += 1
                     continue
-    return trovate
+                elenco, raggio = ris
+                dischi_l.append((cla, clo, raggio))
+                for sid, sla, slo, t in elenco:
+                    if t is not None and datetime.fromtimestamp(int(t), tz=timezone.utc) < limite_eta:
+                        if sid not in trovate:
+                            vecchie += 1
+                        continue
+                    trovate[sid] = (sla, slo)
+                a, b, c, d = cella
+                if max(_km(la, lo, cla, clo) for la in (a, b) for lo in (c, d)) <= raggio * 0.97:
+                    continue                                   # il cerchio copre tutto il riquadro: finito
+                if b - a <= LATO_MINIMO * 1.5:
+                    non_esaurite += 1                          # troppo fitto anche così: ci si ferma
+                    continue
+                m1, m2 = (a + b) / 2, (c + d) / 2
+                prossime += [x for x in ((a, m1, c, m2), (a, m1, m2, d), (m1, b, c, m2), (m1, b, m2, d)) if _tocca(d3, x)]
+            celle = prossime
+    return trovate, {"ricerche": ricerche, "fallite": fallite, "non_esaurite": non_esaurite, "mute": vecchie}
+
+
+def cerca(chiave, domini, adesso):
+    """Dominio a 1 km: tutte le stazioni (ricerca a riquadri). Domini a 3 e 9 km: griglia rada (poi si dirada)."""
+    trovate, riass = cerca_fitta(chiave, domini[3], adesso)
+    box = {n: (domini[n].lat.min(), domini[n].lat.max(), domini[n].lon.min(), domini[n].lon.max()) for n in (2, 1)}
+    punti = []
+    for n, passo in ((2, 0.30), (1, 0.80)):
+        la0, la1, lo0, lo1 = box[n]
+        punti += [(la, lo) for la in np.arange(la0 + passo / 2, la1, passo) for lo in np.arange(lo0 + passo / 2, lo1, passo)]
+    with ThreadPoolExecutor(THREAD) as pool:
+        for ris in pool.map(lambda x: vicine_a(chiave, *x), punti):
+            if ris:
+                for sid, sla, slo, _ in ris[0]:
+                    trovate.setdefault(sid, (sla, slo))
+    return trovate, riass
 
 
 def diradamento(ids, pos, massimo):
@@ -321,6 +460,45 @@ def in_ordine(stazioni):
     return righe
 
 
+def leggi_stazione(chiave, sid, domini, t0, adesso):
+    """Legge una stazione: ({dati della stazione}, None) oppure (None, motivo dello scarto). Gira in un thread."""
+    att = leggi_attuale(chiave, sid)
+    if troppe_richieste():
+        return None, "non lette"
+    if att is None or adesso - att[3] > ETA_MASSIMA_DATO:
+        return None, "senza dati recenti"
+    la, lo, quota, _ = att
+    n = dominio_fine(domini, la, lo)
+    if not n:
+        return None, "fuori dai domini"
+    terreno = domini[n].quota(la, lo)
+    if quota is None or not (-50 < quota < 2500):
+        quota = terreno
+    elif abs(quota - terreno) > TOLLERANZA_QUOTA[n]:
+        return None, "quota incoerente"
+    blocchi = a_blocchi(leggi_giorno(chiave, sid), t0)
+    if not blocchi:
+        return None, "senza storico"
+    return {"lat": la, "lon": lo, "quota": quota, "dominio": n, "blocchi": blocchi}, None
+
+
+def leggi_tutte(chiave, ids, domini, t0, adesso):
+    stazioni = {}
+    motivi = {"senza dati recenti": 0, "quota incoerente": 0, "senza storico": 0, "fuori dai domini": 0, "non lette": 0}
+    fatte = 0
+    passo = max(len(ids) // 10, 1)
+    with ThreadPoolExecutor(THREAD) as pool:
+        for sid, (dati, motivo) in zip(ids, pool.map(lambda i: leggi_stazione(chiave, i, domini, t0, adesso), ids)):
+            fatte += 1
+            if fatte % passo == 0:
+                print(f"  lette {fatte} stazioni su {len(ids)}", flush=True)
+            if dati is not None:
+                stazioni[sid] = dati
+            else:
+                motivi[motivo] += 1
+    return stazioni, motivi
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ciclo", required=True, help="AAAAMMGGHH, inizio della previsione (UTC)")
@@ -337,6 +515,7 @@ def main():
     domini = carica_domini(a.geo)
 
     if a.prova:
+        prova_ricerca(domini, adesso)
         stazioni = stazioni_finte(domini, t0, adesso)
     else:
         chiave = os.environ.get("WU_API_KEY", "")
@@ -347,9 +526,12 @@ def main():
         if adesso - t0 > timedelta(hours=23):
             print("Il ciclo è più vecchio di 23 ore: lo storico a 24 ore di Wunderground non basta, niente nudging.")
             return
+        inizio = time.monotonic()
         print("Ricerca delle stazioni...", flush=True)
-        trovate = cerca(chiave, domini)
-        print(f"Stazioni trovate: {len(trovate)}", flush=True)
+        trovate, riass = cerca(chiave, domini, adesso)
+        print(f"Stazioni trovate: {len(trovate)} con {riass['ricerche']} ricerche nel dominio a 1 km in "
+              f"{time.monotonic() - inizio:.0f} s (mute da più di 2 giorni: {riass['mute']}; ricerche fallite: "
+              f"{riass['fallite']}; riquadri troppo fitti per essere esauriti: {riass['non_esaurite']})", flush=True)
         per_dom = {1: [], 2: [], 3: []}
         for sid, (la, lo) in trovate.items():
             n = dominio_fine(domini, la, lo)
@@ -360,39 +542,11 @@ def main():
                   + diradamento(per_dom[1], {s: trovate[s] for s in per_dom[1]}, MAX_D01))
         print(f"Stazioni scelte: {len(scelte)} (dominio 3: {min(len(per_dom[3]), MAX_D03)}, "
               f"dominio 2: {min(len(per_dom[2]), MAX_D02)}, dominio 1: {min(len(per_dom[1]), MAX_D01)})", flush=True)
-
-        stazioni = {}
-        motivi = {"senza dati recenti": 0, "quota incoerente": 0, "senza storico": 0}
-
-        def leggi(sid):
-            """(sid, dati stazione) oppure (sid, motivo dello scarto) oppure (sid, None)."""
-            att = leggi_attuale(chiave, sid)
-            if att is None or adesso - att[3] > timedelta(hours=3):
-                return sid, "senza dati recenti"
-            la, lo, quota, _ = att
-            n = dominio_fine(domini, la, lo)
-            if not n:
-                return sid, None
-            terreno = domini[n].quota(la, lo)
-            if quota is None or not (-50 < quota < 2500):
-                quota = terreno
-            elif abs(quota - terreno) > TOLLERANZA_QUOTA[n]:
-                return sid, "quota incoerente"
-            blocchi = a_blocchi(leggi_giorno(chiave, sid), t0)
-            if not blocchi:
-                return sid, "senza storico"
-            return sid, {"lat": la, "lon": lo, "quota": quota, "dominio": n, "blocchi": blocchi}
-
-        with ThreadPoolExecutor(max_workers=FILI) as pool:
-            for k, (sid, esito) in enumerate(pool.map(leggi, scelte), 1):
-                if k % 10 == 0:
-                    print(f"  lette {k} stazioni su {len(scelte)}", flush=True)
-                if isinstance(esito, str):
-                    motivi[esito] += 1
-                elif esito:
-                    stazioni[sid] = esito
+        inizio = time.monotonic()
+        stazioni, motivi = leggi_tutte(chiave, scelte, domini, t0, adesso)
         print("Scartate prima del controllo: " + ", ".join(f"{v} {k}" for k, v in motivi.items() if v) +
-              f"; restano {len(stazioni)}", flush=True)
+              f"; restano {len(stazioni)} (lettura in {time.monotonic() - inizio:.0f} s, "
+              f"{_stato['chiamate']} chiamate in tutto)", flush=True)
 
     if not stazioni:
         print("Nessuna stazione utilizzabile: WRF girerà senza nudging.")
@@ -445,6 +599,58 @@ def stazioni_finte(domini, t0, adesso):
         stazioni[f"IPROVA{i:03d}"] = {"lat": la, "lon": lo, "quota": quota, "dominio": 3 if i < 14 else 2,
                                       "blocchi": blocchi}
     return stazioni
+
+
+class ApiFinta:
+    """Fa le veci di `location/near` con stazioni inventate: le 10 più vicine al punto, con la distanza in km."""
+
+    def __init__(self, domini, adesso, n_citta=900, n_sparse=400, seme=2):
+        rng = np.random.default_rng(seme)
+        d3 = domini[3]
+        pos = []
+        while len(pos) < n_citta + n_sparse:
+            if len(pos) < n_citta:                       # un grande centro abitato molto fitto, altri più radi
+                cla, clo = float(d3.lat.mean()), float(d3.lon.mean())
+                sc = 0.04 if rng.random() < 0.6 else 0.12
+                la = cla + rng.normal(0, sc)
+                lo = clo + rng.normal(0, sc)
+            else:
+                la = rng.uniform(d3.lat.min(), d3.lat.max())
+                lo = rng.uniform(d3.lon.min(), d3.lon.max())
+            if d3.contiene(la, lo):
+                pos.append((la, lo))
+        self.pos = np.array(pos)
+        self.adesso = adesso
+        self.chiamate = 0
+        self.lucchetto = threading.Lock()
+
+    def __call__(self, url, params, tentativi=4):
+        with self.lucchetto:
+            self.chiamate += 1
+        la, lo = (float(x) for x in params["geocode"].split(","))
+        d = _km(self.pos[:, 0], self.pos[:, 1], la, lo)
+        o = np.argsort(d)[:10]
+        return {"location": {"stationId": [f"IF{i:05d}" for i in o], "latitude": [float(self.pos[i, 0]) for i in o],
+                             "longitude": [float(self.pos[i, 1]) for i in o], "distanceKm": [round(float(d[i]), 2) for i in o],
+                             "updateTimeUtc": [int(self.adesso.timestamp()) - 600] * len(o)}}
+
+
+def prova_ricerca(domini, adesso):
+    """La ricerca a riquadri trova tutte le stazioni inventate (anche quelle dentro un centro molto fitto)?"""
+    global wu_get
+    vera = wu_get
+    api = ApiFinta(domini, adesso)
+    wu_get = api
+    try:
+        trovate, riass = cerca("finta", domini, adesso)
+    finally:
+        wu_get = vera
+    esistono = {f"IF{i:05d}" for i in range(len(api.pos))}
+    mancano = esistono - set(trovate)
+    print(f"Ricerca di prova: {len(trovate)} trovate su {len(esistono)} con {api.chiamate} interrogazioni "
+          f"(non esaurite: {riass['non_esaurite']}), mancano {len(mancano)}")
+    if len(mancano) > 0.005 * len(esistono):
+        sys.exit(f"!! La ricerca perde troppe stazioni: {len(mancano)}")
 
 
 if __name__ == "__main__":
