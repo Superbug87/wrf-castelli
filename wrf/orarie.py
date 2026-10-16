@@ -5,9 +5,11 @@ Ogni immagine porta scritti solo: tipo di mappa, ora di partenza del run, ora de
 locale). Stessa scala di colori per tutte le ore di una variabile, così si può sfogliare il tempo.
 
 Uscita (in `out`):
-  orarie/indice.json                       elenco di variabili e ore, letto dalla pagina del sito
+  orarie/indice.json                       elenco di variabili e ore dell'ultimo ciclo
+  orarie/<ciclo>/indice.json               lo stesso, per ogni ciclo (la pagina del sito sfoglia i cicli)
   orarie/<ciclo>/<variabile>/<AAAAMMGGHH>.png   AAAAMMGGHH = ora della mappa in UTC
 """
+import io
 import json
 import sys
 from datetime import timezone
@@ -16,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
 
 import previsioni_castelli as pc
 
@@ -111,8 +114,13 @@ def disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, ciclo, out):
             cb.ax.tick_params(labelsize=10, colors=pc.SEC, length=3)
             cb.outline.set_visible(False)
 
-            fig.savefig(cartella / f"{t_utc:%Y%m%d%H}.png", dpi=DPI, facecolor=pc.SFONDO)
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=DPI, facecolor=pc.SFONDO)
             plt.close(fig)
+            # 128 colori bastano per mappe a fasce piatte: file 3-4 volte più piccoli, uguali all'occhio
+            Image.open(buf).convert("RGB").quantize(colors=128, method=Image.Quantize.MEDIANCUT,
+                                                    dither=Image.Dither.NONE).save(
+                cartella / f"{t_utc:%Y%m%d%H}.png", optimize=True)
             totale += 1
         variabili.append({"id": f["nome"], "titolo": f["titolo"], "unita": f["unita"]})
 
@@ -124,6 +132,8 @@ def disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, ciclo, out):
         "percorso": "{ciclo}/{variabile}/{ora}.png",      # {ora} = AAAAMMGGHH in UTC
     }
     out.mkdir(parents=True, exist_ok=True)
-    (out / "indice.json").write_text(json.dumps(indice, ensure_ascii=False, indent=1), encoding="utf-8")
+    testo = json.dumps(indice, ensure_ascii=False, indent=1)
+    (out / "indice.json").write_text(testo, encoding="utf-8")                 # l'ultimo ciclo
+    (out / chiave_ciclo / "indice.json").write_text(testo, encoding="utf-8")  # e uno per ciclo, per sfogliare i precedenti
     print(f"Orarie: {totale} immagini ({len(variabili)} variabili x {len(tempi)} ore) in {out}")
     return totale

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pubblica le immagini nel ramo "risultati" del repository:
 #   ultimo/            i fogli di sintesi dell'ultima previsione
-#   archivio/<ciclo>/  i fogli degli ultimi 28 cicli
-#   orarie/            una immagine per ora e variabile degli ultimi 2 cicli + indice.json (lo legge la pagina del sito)
+#   archivio/<ciclo>/  i fogli degli ultimi 14 cicli (una settimana)
+#   orarie/            una immagine per ora e variabile degli ultimi 14 cicli (una settimana, ~12 MB l'uno) + indice.json
+#                      (ultimo ciclo) + cicli.json (elenco dei cicli presenti): li legge la pagina del sito
 # Il ramo viene riscritto con un solo commit a ogni pubblicazione: la storia non si accumula (le immagini pesano).
 # Uso: pubblica.sh CARTELLA_IMMAGINI CICLO
 set -euo pipefail
@@ -21,8 +22,14 @@ if [ -f "$IMG/orarie/indice.json" ]; then
   mkdir -p orarie
   for d in "$IMG"/orarie/*/; do rm -rf "orarie/$(basename "$d")"; cp -r "$d" "orarie/$(basename "$d")"; done
   cp "$IMG/orarie/indice.json" orarie/indice.json
-  # si tengono i 2 cicli piu' recenti: chi ha ancora in memoria il vecchio indice non trova immagini sparite
-  ls -1d orarie/*/ 2>/dev/null | sort | head -n -2 | xargs -r rm -rf
+  # si tiene una settimana: 14 cicli (due al giorno). I piu' vecchi spariscono.
+  ls -1d orarie/*/ 2>/dev/null | sort | head -n -14 | xargs -r rm -rf
+  # elenco dei cicli presenti, dal piu' recente: lo legge la pagina del sito per scegliere il run
+  python3 - <<'PY'
+import json, os
+cicli = sorted((d for d in os.listdir("orarie") if os.path.isfile(f"orarie/{d}/indice.json")), reverse=True)
+json.dump({"cicli": cicli}, open("orarie/cicli.json", "w"))
+PY
 fi
 {
   PIL=${PILOTA:-ecmwf}; echo "# Ultima previsione WRF — ciclo ${PIL^^} ${CICLO:0:8} ${CICLO:8:2}Z"
@@ -39,8 +46,8 @@ fi
   echo
   for f in ultimo/*.png; do echo "![$(basename "$f" .png)]($f)"; echo; done
 } > README.md
-# l'archivio tiene solo gli ultimi 28 cicli (14 giorni con due cicli al giorno)
-ls -1d archivio/*/ 2>/dev/null | head -n -28 | xargs -r rm -rf
+# l'archivio tiene solo gli ultimi 14 cicli (una settimana con due cicli al giorno)
+ls -1d archivio/*/ 2>/dev/null | head -n -14 | xargs -r rm -rf
 git config user.name "github-actions"; git config user.email "actions@users.noreply.github.com"
 git add -A
 if git diff --cached --quiet; then echo "niente da pubblicare"; exit 0; fi

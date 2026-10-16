@@ -57,12 +57,13 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
 
 ## Dove trovo i risultati
 - Ramo **`risultati`** del repository: la cartella `ultimo/` e il suo `README.md` con tutte le immagini
-  (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 28 cicli (14 giorni).
+  (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 14 cicli (una settimana).
 - Stesso ramo, cartella **`orarie/`**: una immagine per ogni ora e per ogni tipo di mappa (solo tipo, ora del run e ora
-  della mappa, senza descrizioni), degli ultimi 2 cicli; `orarie/indice.json` elenca variabili e ore. Il ramo viene
+  della mappa, senza descrizioni), degli ultimi 14 cicli (una settimana, circa 11 MB a ciclo: immagini a 128 colori);
+  `orarie/cicli.json` elenca i cicli presenti, `orarie/<ciclo>/indice.json` variabili e ore di ciascuno. Il ramo viene
   riscritto con un solo commit a ogni pubblicazione, così la storia non cresce.
 - **Sul sito Meteo Velletri**: la pagina `sito/previsioni-wrf.html` (un solo file, senza dipendenze) sfoglia le immagini
-  orarie: scelta del tipo di mappa, cursore delle ore, tasto play, frecce, scorrimento col dito, salto al giorno.
+  orarie: scelta del run (una settimana di previsioni), del tipo di mappa, cursore delle ore, tasto play, frecce, scorrimento col dito, salto al giorno.
   Va caricata sul sito (FTP) e legge le immagini direttamente da GitHub (`raw.githubusercontent.com`), che le tiene in
   cache circa 5 minuti: si aggiorna da sola quando esce un nuovo ciclo. Si può anche incorporare con un `<iframe>`.
   `sito/meteovelletri.html` è la pagina di Meteo Velletri con la sezione «Previsioni WRF» (iframe sulla pagina sopra).

@@ -37,12 +37,16 @@
   .comandi button { width: 44px; padding: 0; font-size: 1.1rem; }
   .ora { display: flex; justify-content: space-between; margin: 6px 2px 10px; color: var(--sec); font-size: .9rem; font-variant-numeric: tabular-nums; }
   .ora b { color: var(--testo); }
+  .run { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--sec); font-size: .9rem; }
+  .run select { flex: 1; min-width: 0; font: inherit; color: var(--testo); background: var(--carta); border: 1px solid var(--linea);
+                border-radius: 10px; padding: 8px 10px; min-height: 40px; }
   small { color: var(--sec); display: block; margin-top: 14px; }
 </style>
 </head>
 <body>
 <main id="principale">
   <h1>Previsioni WRF · Castelli Romani</h1>
+  <label class="run" id="runbox" hidden>Run <select id="run" aria-label="Run del modello"></select></label>
   <div id="variabili" class="righe" role="group" aria-label="Tipo di mappa"></div>
   <div id="quadro" class="quadro"><img id="img" alt="" draggable="false"><div id="msg" class="msg">Carico…</div></div>
   <div class="comandi">
@@ -68,6 +72,7 @@ const chiaveGiorno = new Intl.DateTimeFormat("sv-SE", { timeZone: FUSO });      
 const oraLocale = new Intl.DateTimeFormat("en-GB", { timeZone: FUSO, hour: "2-digit", hourCycle: "h23" });
 
 let indice = null, variabile = null, k = 0, timer = null;
+let cicli = [], sulUltimo = true;       // cicli disponibili (dal più recente) e se si sta guardando l'ultimo
 const cache = new Map();
 
 function salva(chiave, valore) { try { localStorage.setItem(chiave, valore); } catch (e) { /* facoltativo */ } }
@@ -148,23 +153,59 @@ function oraPiuVicina(t0) {                   // l'ora della mappa più vicina a
   return best;
 }
 
+const etichettaCiclo = c => {            // "2026101612" -> "ven 16 ott, 14:00 (12 UTC)"
+  const d = new Date(Date.UTC(+c.slice(0, 4), +c.slice(4, 6) - 1, +c.slice(6, 8), +c.slice(8, 10)));
+  return `${fmtOra.format(d)} (${c.slice(8, 10)} UTC)`;
+};
+
+async function leggiJson(percorso) {
+  const r = await fetch(BASE + percorso, { cache: "no-cache" });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function apri(ciclo, orario) {           // carica il ciclo e resta, se possibile, sulla stessa ora
+  const nuovo = await leggiJson(ciclo ? `${ciclo}/indice.json` : "indice.json");
+  indice = nuovo; cache.clear(); costruisci();
+  const salvata = leggi("wrf_variabile");
+  variabile = indice.variabili.some(v => v.id === (variabile || salvata)) ? (variabile || salvata) : indice.variabili[0].id;
+  k = oraPiuVicina(orario);
+  scegli(variabile);
+}
+
+function riempiRun() {
+  const box = el("runbox"), sel = el("run");
+  box.hidden = cicli.length < 2;               // con un solo ciclo il selettore non serve
+  sel.textContent = "";
+  cicli.forEach((c, i) => {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = (i === 0 ? "ultimo · " : "") + etichettaCiclo(c);
+    sel.appendChild(o);
+  });
+  if (indice) sel.value = indice.ciclo;
+}
+
 async function carica(primaVolta) {
   try {
-    const r = await fetch(BASE + "indice.json", { cache: "no-cache" });
-    if (!r.ok) throw new Error(r.status);
-    const nuovo = await r.json();
-    if (!primaVolta && indice && nuovo.ciclo === indice.ciclo) return;        // niente di nuovo
-    const orario = indice ? new Date(indice.ore[k]).getTime() : Date.now();   // dopo un aggiornamento resta sulla stessa ora
-    indice = nuovo; cache.clear(); costruisci();
-    const salvata = leggi("wrf_variabile");
-    variabile = indice.variabili.some(v => v.id === (variabile || salvata)) ? (variabile || salvata) : indice.variabili[0].id;
-    k = oraPiuVicina(orario);
-    scegli(variabile);
+    let elenco = [];
+    try { elenco = (await leggiJson("cicli.json")).cicli || []; } catch (e) { /* vecchio formato: solo l'ultimo ciclo */ }
+    const orario = indice ? new Date(indice.ore[k]).getTime() : Date.now();
+    if (primaVolta) {
+      cicli = elenco; await apri(elenco[0] || "", orario); riempiRun();
+    } else if (elenco.length && elenco[0] !== cicli[0]) {                      // è uscito un nuovo ciclo
+      cicli = elenco; riempiRun();
+      if (sulUltimo) { await apri(cicli[0], orario); riempiRun(); }
+    }
   } catch (e) {
     if (primaVolta) { el("msg").textContent = "Previsione non raggiungibile. Riprova tra qualche minuto."; el("msg").style.display = "grid"; }
   }
 }
 
+el("run").onchange = async e => {
+  stop(); const c = e.target.value; sulUltimo = c === cicli[0];
+  try { await apri(c, new Date(indice.ore[k]).getTime()); }
+  catch (err) { el("msg").textContent = "Questo run non è più disponibile."; el("msg").style.display = "grid"; }
+};
 el("indietro").onclick = () => { stop(); mostra(k - 1); };
 el("avanti").onclick = () => { stop(); mostra(k + 1); };
 el("play").onclick = play;

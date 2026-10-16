@@ -116,6 +116,7 @@ from pathlib import Path
 d = Path(sys.argv[1]); idx = json.loads((d / "indice.json").read_text())
 assert idx["ciclo"] == "2026101600" and idx["run"] == "2026-10-16T00:00:00Z", idx
 assert len(idx["variabili"]) >= 9 and len(idx["ore"]) >= 24, (len(idx["variabili"]), len(idx["ore"]))
+assert json.loads((d / idx["ciclo"] / "indice.json").read_text()) == idx, "manca l'indice del ciclo"
 for v in idx["variabili"]:
     for t in idx["ore"]:
         f = d / idx["ciclo"] / v["id"] / (t[:13].replace("-", "").replace("T", "") + ".png")
@@ -123,16 +124,22 @@ for v in idx["variabili"]:
 print("orarie ok:", len(idx["variabili"]), "variabili x", len(idx["ore"]), "ore")
 EOF2
 
-passo "pubblicazione nel ramo risultati (su un repository finto): un solo commit, due cicli di immagini orarie"
+passo "pubblicazione nel ramo risultati (su un repository finto): un solo commit, una settimana (14 cicli) di immagini orarie"
 R="$T/pubblica"; rm -rf "$R"; mkdir -p "$R"; git init -q --bare "$R/remoto.git"
-for c in 2026101600 2026101612 2026101700; do
+for g in $(seq 1 16); do c=$(printf "202610%02d00" "$g")
   rm -rf "$R/img"; mkdir -p "$R/img/orarie/$c/temperatura_2m"; echo x > "$R/img/01_t.png"
-  echo x > "$R/img/orarie/$c/temperatura_2m/a.png"; echo "{\"ciclo\": \"$c\"}" > "$R/img/orarie/indice.json"
+  echo x > "$R/img/orarie/$c/temperatura_2m/a.png"; echo "{\"ciclo\": \"$c\"}" > "$R/img/orarie/indice.json"; cp "$R/img/orarie/indice.json" "$R/img/orarie/$c/indice.json"
   REPO_URL="$R/remoto.git" GITHUB_REPOSITORY=u/r bash wrf/pubblica.sh "$R/img" "$c" 2>/dev/null
 done
 git clone -q -b risultati "$R/remoto.git" "$R/vedi"
 [ "$(git -C "$R/vedi" rev-list --count HEAD)" = 1 ] || { echo "la storia si accumula"; exit 1; }
-[ "$(ls "$R/vedi/orarie" | tr '\n' ' ')" = "2026101612 2026101700 indice.json " ] || { echo "cicli orari sbagliati"; exit 1; }
+[ "$(ls -d "$R"/vedi/orarie/*/ | wc -l)" = 14 ] || { echo "i cicli orari non sono 14"; exit 1; }
+[ "$(ls -d "$R"/vedi/archivio/*/ | wc -l)" = 14 ] || { echo "i cicli d'archivio non sono 14"; exit 1; }
+python3 - "$R/vedi/orarie/cicli.json" <<'EOF4'
+import json, sys
+c = json.load(open(sys.argv[1]))["cicli"]
+assert len(c) == 14 and c[0] == "2026101600" and c[-1] == "2026100300", c
+EOF4
 
 passo "pagina del sito: sintassi del JavaScript"
 python3 - "$T/pagina.js" <<'EOF3'
