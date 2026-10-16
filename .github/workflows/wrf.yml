@@ -22,6 +22,10 @@ on:
         description: "Ore calcolate da ogni job (GitHub ferma i job a 6 ore); al massimo 4 segmenti"
         required: false
         default: "16"
+      stazioni:
+        description: "Nudging sulle stazioni Wunderground (serve il segreto WU_API_KEY)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write                 # serve a pubblicare le immagini nel ramo "risultati"
@@ -181,7 +185,7 @@ jobs:
       - name: Dati globali, ungrib, metgrid, real, stazioni (solo primo segmento)
         if: steps.s.outputs.attivo == 'true' && matrix.seg == 0
         env:
-          WU_API_KEY: ${{ secrets.WU_API_KEY }}      # facoltativo: senza, niente nudging sulle stazioni
+          WU_API_KEY: ${{ github.event.inputs.stazioni != 'false' && secrets.WU_API_KEY || '' }}   # senza, niente nudging
         run: bash wrf/esegui.sh prepara "$CICLO" "$ORE"
       - name: Stato del segmento precedente
         if: steps.s.outputs.attivo == 'true' && matrix.seg > 0
