@@ -34,7 +34,7 @@ esito_wrf() {  # $1 = file rsl da controllare
 case "$cmd" in
 prepara)
   ORE=${3:?ore totali}
-  mkdir -p "$LAVORO/WPS" "$LAVORO/dati"
+  mkdir -p "$LAVORO/WPS" "$LAVORO/dati" "$LAVORO/run"
   cd "$LAVORO"
   echo "== $PREFISSO $CICLO, ore 0-$ORE"
   python3 "$QUI/scarica_$PILOTA.py" --ciclo "$CICLO" --ore "$ORE" --out dati

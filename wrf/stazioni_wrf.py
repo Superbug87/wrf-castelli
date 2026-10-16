@@ -351,7 +351,6 @@ def main():
             n = dominio_fine(domini, la, lo)
             if n:
                 per_dom[n].append(sid)
-        scelte = (diradamento(per_dom[3], MAX_D03, ) if False else None)
         scelte = (diradamento(per_dom[3], {s: trovate[s] for s in per_dom[3]}, MAX_D03)
                   + diradamento(per_dom[2], {s: trovate[s] for s in per_dom[2]}, MAX_D02)
                   + diradamento(per_dom[1], {s: trovate[s] for s in per_dom[1]}, MAX_D01))
