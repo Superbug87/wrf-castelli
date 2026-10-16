@@ -6,6 +6,18 @@ server gratuiti di GitHub. Alla fine disegna le stesse mappe di `previsioni_cast
 (temperatura a 2 m e 850 hPa, vento medio, raffiche, pioggia 1/3/6 h, pressione, umidità, CAPE),
 una ogni 6 ore, e le pubblica nel ramo `risultati`.
 
+## Avvertenze
+- **Progetto personale e sperimentale, non un servizio ufficiale.** Le previsioni sono prodotte in automatico da un modello
+  numerico, senza il controllo di un meteorologo, e possono essere sbagliate, anche di molto. Per pioggia e temporali
+  posizione e orario possono sbagliare di chilometri e di ore.
+- **Non sostituiscono i bollettini e le allerte ufficiali** (Protezione Civile, Aeronautica Militare, centri funzionali
+  regionali). Non usarle per decisioni che riguardano la sicurezza di persone o cose: protezione civile, volo,
+  navigazione, lavori o eventi a rischio.
+- **Nessuna garanzia.** Sono fornite «così come sono», senza garanzie di esattezza, continuità o disponibilità: il servizio
+  può ritardare, fermarsi o dare errori. L'autore non risponde di danni derivanti dall'uso.
+- **Nessun legame con i fornitori dei dati.** Il progetto non è collegato a ECMWF, NOAA, NCAR/UCAR, Weather Underground né
+  agli altri fornitori elencati sotto e non è da loro approvato o rivisto.
+
 ## Prima di cominciare
 - Il repository deve essere **pubblico** (lo è): i server sono da 4 processori e i minuti sono illimitati.
   In un repository privato i server hanno 2 processori e 2000 minuti al mese: non bastano.
@@ -59,6 +71,21 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
   `ungrib` non legge la compressione CCSDS di ECMWF. Gli strati di suolo, numerati da 1 a 4, diventano
   profondità in cm (0-7, 7-28, 28-100, 100-289) e l'orografia dell'ora 0 è copiata in tutte le ore.
 - Non sostituisce le previsioni ufficiali.
+
+## Fonti dei dati e licenze
+| cosa | fonte | condizioni |
+|---|---|---|
+| Dati di partenza e al contorno (default) | [ECMWF IFS open data](https://www.ecmwf.int/en/forecasts/datasets/open-data), 0,25°, [doi:10.21957/open-data](https://doi.org/10.21957/open-data) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) e condizioni d'uso ECMWF. **Dati modificati**: ritagliati sull'Italia, ricodificati e usati come condizioni iniziali e al contorno di WRF. ECMWF non garantisce i dati e non risponde di errori o omissioni |
+| Dati di partenza alternativi | [GFS di NOAA/NCEP](https://www.nco.ncep.noaa.gov/pmb/products/gfs/) | dati pubblici del governo statunitense; NOAA non approva questo lavoro |
+| Modello | [WRF e WPS](https://www2.mmm.ucar.edu/wrf/users/public.html) di NCAR/UCAR | software pubblico, non incluso qui: lo compila il flusso di lavoro dai sorgenti ufficiali |
+| Terreno e uso del suolo | dati geografici [WPS_GEOG](https://www2.mmm.ucar.edu/wrf/users/download/get_sources_wps_geog.html) di NCAR/UCAR (tra cui GMTED2010 di USGS/NGA e MODIS) | scaricati durante il calcolo, non inclusi qui; vale la licenza di ciascun dato |
+| Stazioni meteo | rete di stazioni amatoriali di [Weather Underground](https://www.wunderground.com/) (The Weather Company), tramite la chiave personale del proprietario | restano soggette ai termini d'uso di Weather Underground, da rispettare (la chiave è personale). I dati **non vengono ripubblicati**: si scaricano durante il calcolo, entrano in WRF e non finiscono nei risultati; i file temporanei che passano da un segmento all'altro sono cifrati; i log non riportano codici o posizioni delle stazioni; le mappe mostrano solo l'uscita del modello |
+| Solo per `previsioni_castelli.py` usato da solo | [Open-Meteo](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); l'API gratuita è per uso non commerciale) e quote dal modello digitale del terreno Copernicus DEM («contiene dati Copernicus modificati») | non usati dalla catena WRF |
+
+Librerie principali: ecCodes (Apache 2.0), JasPer, NumPy, SciPy, Matplotlib, netCDF4, requests: ciascuna con la sua licenza.
+I nomi dei paesi e le posizioni sulle mappe sono scritti a mano nello script, non vengono da OpenStreetMap o altri archivi.
+Le condizioni dei fornitori possono cambiare: prima di usare il progetto in modo diverso da quello personale
+(per esempio per un servizio pubblico o commerciale) vanno ricontrollate.
 
 ## Stato del collaudo
 Provato davvero (in un ambiente senza compilatore Fortran):

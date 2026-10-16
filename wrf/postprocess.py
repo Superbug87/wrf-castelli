@@ -278,6 +278,9 @@ def main():
                    f"sono ricampionate a {2 * pc.MEZZO_LAT * 111.32 / (a.n - 1):.1f} km. "
                    "Raffiche: stima, massimo orario del vento a 10 m x 1,4. CAPE: stima da parcella di superficie.")
 
+    fonte = ("ECMWF IFS open data (CC BY 4.0), modificati" if a.pilota == "ecmwf" else "NOAA/NCEP GFS")
+    modello_txt += f" Dati di partenza: {fonte}."
+
     # se le stazioni sono già state assimilate da WRF (nudging) non si corregge una seconda volta
     file_obs = sorted(Path(a.uscite).rglob("obs_fdda_end.txt"))
     nudging = bool(file_obs) and bool(a.ciclo)

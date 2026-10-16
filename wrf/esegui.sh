@@ -75,6 +75,14 @@ modello)
   cartella_run
   if [ "$DA" -gt 0 ]; then                     # ripresa: servono wrfinput, wrfbdy e il restart del segmento prima
     tar -xzf "$LAVORO/stato.tgz" -C "$LAVORO/run"
+    if [ -s obs.tgz.enc ]; then                # le osservazioni delle stazioni viaggiano cifrate (vedi sotto)
+      if [ -n "${WU_API_KEY:-}" ] && openssl enc -d -aes-256-cbc -pbkdf2 -pass env:WU_API_KEY -in obs.tgz.enc | tar -xzf -; then
+        rm -f obs.tgz.enc
+      else
+        echo "!! Osservazioni delle stazioni non leggibili: questo segmento gira senza nudging"
+        rm -f OBS_DOMAIN* obs_fdda_end.txt obs.tgz.enc
+      fi
+    fi
   fi
   OBS=()
   if [ -s obs_fdda_end.txt ] && [ -s OBS_DOMAIN301 ]; then
@@ -91,7 +99,15 @@ modello)
   # i nomi dei file di WRF contengono ":" e GitHub non li accetta come allegati: li impacchettiamo
   FINE=$(date -u -d "${CICLO:0:8} ${CICLO:8:2}:00 UTC + ${A} hours" +%Y-%m-%d_%H:%M:%S)
   # le osservazioni delle stazioni servono anche ai segmenti dopo, e la loro presenza va saputa dalle mappe
-  EXTRA=(); [ -s obs_fdda_end.txt ] && EXTRA=(OBS_DOMAIN* obs_fdda_end.txt)
+  # (il repository e' pubblico e gli allegati si scaricano: le osservazioni, con i codici e le posizioni delle
+  #  stazioni, escono solo cifrate con la chiave Wunderground; in chiaro resta il solo istante finale)
+  EXTRA=()
+  if [ -s obs_fdda_end.txt ] && [ -n "${WU_API_KEY:-}" ] && ls OBS_DOMAIN* >/dev/null 2>&1; then
+    tar -czf - OBS_DOMAIN* | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:WU_API_KEY -out obs.tgz.enc
+    EXTRA=(obs.tgz.enc obs_fdda_end.txt)
+  elif [ -s obs_fdda_end.txt ]; then
+    EXTRA=(obs_fdda_end.txt)
+  fi
   tar -czf "$LAVORO/stato.tgz" wrfinput_d0* wrfbdy_d01 wrfrst_d0*_"$FINE" "${EXTRA[@]}"
   tar -czf "$LAVORO/uscite.tgz" wrfout_d03_* wrfxtrm_d03_* "${EXTRA[@]:+obs_fdda_end.txt}"
   ls -la "$LAVORO"/*.tgz

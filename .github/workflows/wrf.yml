@@ -195,6 +195,8 @@ jobs:
           path: /home/runner/lavoro
       - name: WRF
         if: steps.s.outputs.attivo == 'true'
+        env:
+          WU_API_KEY: ${{ github.event.inputs.stazioni != 'false' && secrets.WU_API_KEY || '' }}   # serve solo a cifrare le osservazioni passate al segmento dopo
         run: bash wrf/esegui.sh modello "$CICLO" "${{ steps.s.outputs.da }}" "${{ steps.s.outputs.a }}"
       - name: Salvo lo stato per il segmento dopo
         if: steps.s.outputs.attivo == 'true'
