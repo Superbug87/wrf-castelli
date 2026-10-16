@@ -816,7 +816,7 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
                   "Stessi colori in tutti i riquadri; linee grigie: quota ogni 200 m.", modello_txt,
                   "Non sostituisce le previsioni ufficiali."])
     testo_secco = wrap([modello_txt, "Non sostituisce le previsioni ufficiali."])
-    foot = lambda t: 0.3 + 0.19 * (t.count("\n") + 1)
+    foot = lambda t: 0.55 + 0.19 * (t.count("\n") + 1)
     simulato = "SIMULAZIONE" in banner
 
     def intestazione(fig, H, titolo, sotto):

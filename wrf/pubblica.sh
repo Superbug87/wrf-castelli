@@ -18,7 +18,7 @@ cp "$IMG"/*.png "archivio/$CICLO/"
   echo "> Esperimento personale, **non un servizio ufficiale**: può sbagliare e non sostituisce bollettini e allerte della Protezione Civile e dell'Aeronautica Militare. Nessuna garanzia."
   if [ "${PIL}" = "gfs" ]; then FONTE="NOAA/NCEP GFS"; else FONTE="ECMWF IFS open data (CC BY 4.0, dati modificati)"; fi
   echo ">"
-  echo "> Dati di partenza: ${FONTE}. Modello: WRF (NCAR). Stazioni: Weather Underground, usate solo dentro il modello e non ripubblicate. Fonti e licenze: [README del progetto](https://github.com/${GITHUB_REPOSITORY:-utente/repo}#fonti-dei-dati-e-licenze)."
+  echo "> Dati di partenza: ${FONTE}. Modello: WRF (NCAR). Temperatura del mare: MUR SST (NASA JPL), quando disponibile. Stazioni: Weather Underground, usate solo dentro il modello e non ripubblicate. Fonti e licenze: [README del progetto](https://github.com/${GITHUB_REPOSITORY:-utente/repo}#fonti-dei-dati-e-licenze)."
   echo
   for f in ultimo/*.png; do echo "![$(basename "$f" .png)]($f)"; echo; done
 } > README.md

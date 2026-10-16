@@ -50,8 +50,17 @@ prepara)
   ./ungrib.exe > ungrib.log 2>&1 || { tail -n 40 ungrib.log; exit 1; }
   ls "$PREFISSO":* | head -n 3
   rm -rf ../dati GRIBFILE.*
+  if [ "${SST_MARE:-1}" = 1 ]; then          # temperatura del mare ad alta risoluzione (facoltativa)
+    if python3 "$QUI/scarica_sst.py" --ciclo "$CICLO" --ore "$ORE" --out .; then
+      python3 "$QUI/config.py" wps --ciclo "$CICLO" --ore "$ORE" --pilota "$PILOTA" --sst > namelist.wps
+      SST_USATA=1
+    else
+      echo "!! MUR SST non disponibile: si usa la temperatura del mare di $PREFISSO"; rm -f SST:*
+    fi
+  fi
   ./metgrid.exe > metgrid.log 2>&1 || { tail -n 40 metgrid.log; exit 1; }
-  rm -f "$PREFISSO":*
+  rm -f "$PREFISSO":* SST:*
+  if [ "${SST_USATA:-0}" = 1 ]; then echo "MUR SST" > "$LAVORO/run/sst_usata.txt"; fi   # le mappe lo citano
   ls met_em.d0* | head -n 3
   read -r NLEV NSOIL < <(python3 "$QUI/config.py" metgrid-info "$(ls met_em.d01.* | head -n1)")
   echo "livelli metgrid: $NLEV, livelli suolo: $NSOIL"
@@ -108,8 +117,10 @@ modello)
   elif [ -s obs_fdda_end.txt ]; then
     EXTRA=(obs_fdda_end.txt)
   fi
+  USC=(); [ -s obs_fdda_end.txt ] && USC+=(obs_fdda_end.txt)
+  if [ -s sst_usata.txt ]; then EXTRA+=(sst_usata.txt); USC+=(sst_usata.txt); fi
   tar -czf "$LAVORO/stato.tgz" wrfinput_d0* wrfbdy_d01 wrfrst_d0*_"$FINE" "${EXTRA[@]}"
-  tar -czf "$LAVORO/uscite.tgz" wrfout_d03_* wrfxtrm_d03_* "${EXTRA[@]:+obs_fdda_end.txt}"
+  tar -czf "$LAVORO/uscite.tgz" wrfout_d03_* wrfxtrm_d03_* "${USC[@]}"
   ls -la "$LAVORO"/*.tgz
   ;;
 *)

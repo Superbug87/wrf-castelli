@@ -30,8 +30,9 @@ def _tre(valore, fmt="{}"):
     return ", ".join(fmt.format(valore) for _ in range(3))
 
 
-def namelist_wps(inizio, fine, geog, prefisso):
+def namelist_wps(inizio, fine, geog, prefisso, sst=False):
     starts = D.parent_starts()
+    fg = f"'{prefisso}', 'SST'" if sst else f"'{prefisso}'"   # SST: file scritti da scarica_sst.py
     return f"""&share
  wrf_core = 'ARW',
  max_dom = 3,
@@ -66,7 +67,7 @@ def namelist_wps(inizio, fine, geog, prefisso):
 /
 
 &metgrid
- fg_name = '{prefisso}',
+ fg_name = {fg},
  io_form_metgrid = 2,
 /
 """
@@ -182,6 +183,7 @@ def main():
     w.add_argument("--geog", default="/percorso/WPS_GEOG")
     w.add_argument("--pilota", choices=["ecmwf", "gfs"], default="ecmwf",
                    help="modello globale da cui WRF prende condizioni iniziali e al contorno")
+    w.add_argument("--sst", action="store_true", help="metgrid usa anche i file SST:* (temperatura del mare ad alta risoluzione)")
     i = sub.add_parser("input")
     i.add_argument("--ciclo", required=True)
     i.add_argument("--da", type=int, default=0)
@@ -198,7 +200,7 @@ def main():
     D.verifica()
     if a.cmd == "wps":
         c = _ciclo(a.ciclo)
-        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog, a.pilota.upper()))
+        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog, a.pilota.upper(), a.sst))
     elif a.cmd == "input":
         c = _ciclo(a.ciclo)
         if a.a <= a.da:

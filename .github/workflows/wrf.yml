@@ -26,6 +26,10 @@ on:
         description: "Nudging sulle stazioni Wunderground (serve il segreto WU_API_KEY)"
         type: boolean
         default: true
+      mare:
+        description: "Temperatura del mare ad alta risoluzione (MUR SST, 1 km) al posto di quella del modello globale"
+        type: boolean
+        default: true
 
 permissions:
   contents: write                 # serve a pubblicare le immagini nel ramo "risultati"
@@ -186,6 +190,7 @@ jobs:
         if: steps.s.outputs.attivo == 'true' && matrix.seg == 0
         env:
           WU_API_KEY: ${{ github.event.inputs.stazioni != 'false' && secrets.WU_API_KEY || '' }}   # senza, niente nudging
+          SST_MARE: ${{ github.event.inputs.mare != 'false' && '1' || '0' }}
         run: bash wrf/esegui.sh prepara "$CICLO" "$ORE"
       - name: Stato del segmento precedente
         if: steps.s.outputs.attivo == 'true' && matrix.seg > 0

@@ -279,6 +279,8 @@ def main():
                    "Raffiche: stima, massimo orario del vento a 10 m x 1,4. CAPE: stima da parcella di superficie.")
 
     fonte = ("ECMWF IFS open data (CC BY 4.0), modificati" if a.pilota == "ecmwf" else "NOAA/NCEP GFS")
+    if list(Path(a.uscite).rglob("sst_usata.txt")):
+        fonte += "; mare: MUR SST (NASA JPL)"
     modello_txt += f" Dati di partenza: {fonte}."
 
     # se le stazioni sono già state assimilate da WRF (nudging) non si corregge una seconda volta
