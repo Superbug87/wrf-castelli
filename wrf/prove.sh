@@ -38,6 +38,11 @@ for da, a in ((0, 16), (16, 32), (32, 48)):
     assert fine is None or inizio == fine, "un segmento non riparte dove finisce il precedente"
     fine = (tc["end_day"][0], tc["end_hour"][0])
     assert n["fdda"]["fdda_end"][0] == 530.0
+import importlib.util
+sp = importlib.util.spec_from_file_location("config", "wrf/config.py"); cfg = importlib.util.module_from_spec(sp); sp.loader.exec_module(cfg)
+for secondi in (16 * 3600, 3 * 3600, 3600):   # segmento, intervallo dei bordi, uscite orarie
+    assert secondi % cfg.TIME_STEP == 0, f"il passo di {cfg.TIME_STEP} s non divide {secondi} s"
+assert cfg.TIME_STEP % 9 == 0, "i nidi (rapporto 3 poi 3) vogliono un passo intero"
 print("namelist ok")
 EOF
 

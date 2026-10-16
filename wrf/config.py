@@ -15,7 +15,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dominio as D  # noqa: E402
 
-TIME_STEP = 54  # s sul dominio 1; 18 s e 6 s nei nidi (parent_time_step_ratio 1:3:3)
+# s sul dominio 1; 15 s e 5 s nei nidi (parent_time_step_ratio 1:3:3). Deve dividere esattamente la durata di un
+# segmento (16 h = 57600 s): con 54 s l'ultimo passo di d01 sforava le 16:00 e WRF non scriveva i restart di d01 e d02.
+TIME_STEP = 45
 
 
 def _ciclo(testo):

@@ -103,10 +103,13 @@ modello)
   echo "== wrf.exe da +${DA} h a +${A} h su $(nproc --all) processori ($(date -u +%H:%M) UTC)"
   mpirun -np "$(nproc --all)" ./wrf.exe > wrf.log 2>&1 || { tail -n 40 wrf.log; esito_wrf rsl.error.0000; exit 1; }
   esito_wrf rsl.error.0000
+  FINE=$(date -u -d "${CICLO:0:8} ${CICLO:8:2}:00 UTC + ${A} hours" +%Y-%m-%d_%H:%M:%S)
+  for d in 1 2 3; do   # senza il restart di tutti e tre i domini il segmento dopo non puo' ripartire
+    [ -s "wrfrst_d0${d}_${FINE}" ] || { echo "!! manca il restart del dominio ${d} alle ${FINE}"; ls wrfrst_* 2>/dev/null || true; exit 1; }
+  done
   echo "fine ($(date -u +%H:%M) UTC)"
   ls -la wrfout_d03_* wrfrst_d03_* 2>/dev/null | tail -n 8 || true
   # i nomi dei file di WRF contengono ":" e GitHub non li accetta come allegati: li impacchettiamo
-  FINE=$(date -u -d "${CICLO:0:8} ${CICLO:8:2}:00 UTC + ${A} hours" +%Y-%m-%d_%H:%M:%S)
   # le osservazioni delle stazioni servono anche ai segmenti dopo, e la loro presenza va saputa dalle mappe
   # (il repository e' pubblico e gli allegati si scaricano: le osservazioni, con i codici e le posizioni delle
   #  stazioni, escono solo cifrate con la chiave Wunderground; in chiaro resta il solo istante finale)
