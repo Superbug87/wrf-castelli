@@ -149,6 +149,45 @@ open(sys.argv[1], "w", encoding="utf-8").write(re.search(r"<script>(.*?)</script
 EOF3
 if command -v node >/dev/null; then node --check "$T/pagina.js" && echo "pagina ok"; else echo "node non c'e': salto"; fi
 
+passo "GIF dell'intero run: encoder della pagina riletto con Pillow (2 s a fotogramma, pixel identici)"
+if command -v node >/dev/null; then
+  node - "$T/pagina.js" "$T/prova.gif" <<'EOF5'
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[2], "utf8");
+const da = src.indexOf("function lzwGif"), a = src.indexOf("async function scaricaGif");
+const { fotogramma } = new Function(src.slice(da, a) + "; return { fotogramma };")();
+const w = 40, h = 30, pezzi = [Buffer.from([71, 73, 70, 56, 57, 97, w, 0, h, 0, 0, 0, 0,
+  0x21, 0xFF, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0])];
+for (let f = 0; f < 3; f++) {            // 3 fotogrammi; l'ultimo con tanti colori (prova della riduzione a 256)
+  const px = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    const x = i % w, y = Math.floor(i / w), molti = f === 2;
+    px[4 * i] = molti ? (x * 6 + y) & 255 : (x < 20 ? 200 : 20 * f);
+    px[4 * i + 1] = molti ? (y * 8 + x) & 255 : 100 + 50 * f;
+    px[4 * i + 2] = molti ? (x * y) & 255 : (y < 15 ? 30 : 220); px[4 * i + 3] = 255;
+  }
+  fs.writeFileSync(process.argv[3] + `.${f}.raw`, Buffer.from(px.buffer));
+  pezzi.push(Buffer.from(fotogramma(px, w, h, 200)));
+}
+pezzi.push(Buffer.from([0x3B]));
+fs.writeFileSync(process.argv[3], Buffer.concat(pezzi));
+EOF5
+  python3 - "$T/prova.gif" <<'EOF6'
+import sys
+import numpy as np
+from PIL import Image, ImageSequence
+g = sys.argv[1]; im = Image.open(g)
+fr = [f.convert("RGB").copy() for f in ImageSequence.Iterator(im)]
+assert len(fr) == 3 and {f.info["duration"] for f in ImageSequence.Iterator(Image.open(g))} == {2000}, "durata o numero di fotogrammi"
+for i, f in enumerate(fr[:2]):                # i primi due hanno pochi colori: identici
+    raw = np.fromfile(f"{g}.{i}.raw", np.uint8).reshape(30, 40, 4)[:, :, :3]
+    assert np.abs(np.asarray(f, int) - raw).max() == 0, f"fotogramma {i} diverso"
+raw = np.fromfile(f"{g}.2.raw", np.uint8).reshape(30, 40, 4)[:, :, :3]   # molti colori (rumore): riduzione a 256, errore contenuto
+assert np.abs(np.asarray(fr[2], int) - raw).max() < 64, "riduzione colori troppo forte"
+print("gif ok")
+EOF6
+else echo "node non c'e': salto"; fi
+
 passo "movimento della pioggia su un caso inventato"
 python3 - <<'EOF'
 import sys

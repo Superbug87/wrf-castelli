@@ -35,6 +35,9 @@
   .comandi { display: flex; align-items: center; gap: 8px; }
   .comandi input[type=range] { flex: 1; min-width: 0; height: 40px; accent-color: var(--acc); }
   .comandi button { width: 44px; padding: 0; font-size: 1.1rem; }
+  .scarica { display: flex; gap: 8px; margin: 0 0 10px; }
+  .scarica button { flex: 1; border-radius: 10px; font-size: .95rem; }
+  button:disabled { opacity: .6; cursor: progress; }
   .ora { display: flex; justify-content: space-between; margin: 6px 2px 10px; color: var(--sec); font-size: .9rem; font-variant-numeric: tabular-nums; }
   .ora b { color: var(--testo); }
   .run { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--sec); font-size: .9rem; }
@@ -56,6 +59,10 @@
     <input id="cursore" type="range" min="0" max="0" value="0" aria-label="Ora della mappa">
   </div>
   <div class="ora"><span id="ora"></span><span id="passo"></span></div>
+  <div class="scarica">
+    <button id="scarica-img" type="button">⬇ Immagine</button>
+    <button id="scarica-gif" type="button">⬇ GIF del run</button>
+  </div>
   <div id="giorni" class="righe" role="group" aria-label="Giorno"></div>
   <small>Esperimento personale, non un servizio ufficiale: non sostituisce bollettini e allerte della Protezione Civile.</small>
 </main>
@@ -82,7 +89,7 @@ const url = (v, i) => `${BASE}${indice.ciclo}/${v}/${indice.ore[i].slice(0, 13).
 
 function immagine(v, i) {                     // una sola Image per URL: serve da precaricamento
   const u = url(v, i);
-  if (!cache.has(u)) { const im = new Image(); im.src = u; cache.set(u, im); }
+  if (!cache.has(u)) { const im = new Image(); im.crossOrigin = "anonymous"; im.src = u; cache.set(u, im); }
   return cache.get(u);
 }
 
@@ -223,6 +230,98 @@ el("quadro").addEventListener("touchend", e => {
   const dx = e.changedTouches[0].clientX - x0; x0 = null;
   if (Math.abs(dx) > 40) { stop(); mostra(k + (dx < 0 ? 1 : -1)); }
 }, { passive: true });
+
+
+// ---------- Scarica l'immagine o l'intero run in GIF ----------
+function salvaBlob(blob, nome) {
+  const u = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = u; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+}
+const nomeBase = i => `wrf_${variabile}_${indice.ciclo}_${indice.ore[i].slice(0, 13).replace(/[-T]/g, "")}`;
+
+async function scaricaImmagine() {
+  const b = el("scarica-img"), testo = b.textContent; b.disabled = true;
+  try {
+    const r = await fetch(url(variabile, k)); if (!r.ok) throw new Error(r.status);
+    salvaBlob(await r.blob(), nomeBase(k) + ".png");
+  } catch (e) { window.open(url(variabile, k), "_blank"); }      // se il browser non lascia scaricare, la apre
+  b.disabled = false; b.textContent = testo;
+}
+
+// Encoder GIF minimale: un fotogramma = una tavolozza locale (le immagini hanno al massimo 128 colori).
+function lzwGif(indici, minimo) {
+  const clear = 1 << minimo, fine = clear + 1, out = [];
+  let dim = minimo + 1, prossimo = fine + 1, acc = 0, nbit = 0, dict = new Map();
+  const emetti = c => { acc |= c << nbit; nbit += dim; while (nbit >= 8) { out.push(acc & 255); acc >>>= 8; nbit -= 8; } };
+  emetti(clear);
+  let pre = indici[0];
+  for (let i = 1; i < indici.length; i++) {
+    const k2 = indici[i], chiave = (pre << 8) | k2, v = dict.get(chiave);
+    if (v !== undefined) { pre = v; continue; }
+    emetti(pre);
+    if (prossimo < 4096) {
+      dict.set(chiave, prossimo++);
+      if (prossimo - 1 === (1 << dim) && dim < 12) dim++;
+    } else { emetti(clear); dict = new Map(); dim = minimo + 1; prossimo = fine + 1; }
+    pre = k2;
+  }
+  emetti(pre); emetti(fine);
+  if (nbit > 0) out.push(acc & 255);
+  return out;
+}
+
+function fotogramma(rgba, w, h, ritardoCs) {
+  let mappa = new Map(), n = w * h, indici = new Uint8Array(n), colori = [], sh = 0;
+  for (;;) {                                  // se i colori sono più di 256 si tolgono i bit meno importanti
+    mappa = new Map(); colori = []; let troppi = false;
+    for (let i = 0; i < n; i++) {
+      const r = rgba[4 * i] >> sh << sh, g = rgba[4 * i + 1] >> sh << sh, b = rgba[4 * i + 2] >> sh << sh;
+      const c = (r << 16) | (g << 8) | b; let ix = mappa.get(c);
+      if (ix === undefined) { if (colori.length === 256) { troppi = true; break; } ix = colori.length; mappa.set(c, ix); colori.push(c); }
+      indici[i] = ix;
+    }
+    if (!troppi) break; sh++;
+  }
+  let bits = 1; while ((1 << bits) < colori.length) bits++;
+  const out = [0x21, 0xF9, 4, 0x04, ritardoCs & 255, ritardoCs >> 8, 0, 0,        // ritardo, il fotogramma resta com'è
+               0x2C, 0, 0, 0, 0, w & 255, w >> 8, h & 255, h >> 8, 0x80 | (bits - 1)];
+  for (let i = 0; i < (1 << bits); i++) { const c = colori[i] || 0; out.push(c >> 16 & 255, c >> 8 & 255, c & 255); }
+  const minimo = Math.max(2, bits), dati = lzwGif(indici, minimo);
+  out.push(minimo);
+  for (let i = 0; i < dati.length; i += 255) { const blocco = dati.slice(i, i + 255); out.push(blocco.length, ...blocco); }
+  out.push(0);
+  return out;
+}
+
+async function scaricaGif() {
+  const b = el("scarica-gif"), testo = b.textContent, tot = indice.ore.length; b.disabled = true; stop();
+  try {
+    const pezzi = [];
+    const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently: true });
+    let w = 0, h = 0;
+    for (let i = 0; i < tot; i++) {
+      b.textContent = `GIF ${i + 1}/${tot}…`;
+      const im = immagine(variabile, i);
+      if (!im.complete || !im.naturalWidth) await new Promise((ok, no) => { im.addEventListener("load", ok, { once: true }); im.addEventListener("error", () => no(new Error("immagine")), { once: true }); });
+      if (i === 0) {
+        w = im.naturalWidth; h = im.naturalHeight; cv.width = w; cv.height = h;
+        pezzi.push(new Uint8Array([71, 73, 70, 56, 57, 97, w & 255, w >> 8, h & 255, h >> 8, 0, 0, 0,
+          0x21, 0xFF, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0]));   // GIF89a, ripetizione continua
+      }
+      cx.drawImage(im, 0, 0);
+      pezzi.push(new Uint8Array(fotogramma(cx.getImageData(0, 0, w, h).data, w, h, 200)));  // 200 centesimi = 2 secondi
+      await new Promise(r => setTimeout(r, 0));                                              // lascia respirare la pagina
+    }
+    pezzi.push(new Uint8Array([0x3B]));
+    salvaBlob(new Blob(pezzi, { type: "image/gif" }), `wrf_${variabile}_${indice.ciclo}.gif`);
+  } catch (e) {
+    el("msg").textContent = "Non riesco a creare la GIF (immagini non disponibili?). Riprova tra poco."; el("msg").style.display = "grid";
+  }
+  b.disabled = false; b.textContent = testo;
+}
+el("scarica-img").onclick = scaricaImmagine;
+el("scarica-gif").onclick = scaricaGif;
 
 // dentro Meteo Velletri (iframe): dice alla pagina quanto e' alta, così non restano spazi vuoti
 if (window.parent !== window) {
