@@ -168,10 +168,26 @@ def namelist_input(inizio, fine, riprendi, nlev, nsoil, obs_minuti=None, obs_ven
 
 
 def info_metgrid(percorso):
+    """Livelli verticali e livelli di suolo di un file met_em di WPS (letto in WPS 4.7.0, 16 ottobre 2026).
+    I livelli verticali sono la dimensione `num_metgrid_levels` (non un attributo: real.exe la legge da li');
+    i livelli di suolo sono l'attributo globale `NUM_METGRID_SOIL_LEVELS`, che metgrid scrive sempre ma a 0
+    se non trova nessun campo di suolo (ST, SOILT, STC_WPS)."""
     from netCDF4 import Dataset
 
     with Dataset(percorso) as ds:
-        return int(ds.getncattr("NUM_METGRID_LEVELS")), int(ds.getncattr("NUM_METGRID_SOIL_LEVELS"))
+        if "num_metgrid_levels" in ds.dimensions:
+            nlev = len(ds.dimensions["num_metgrid_levels"])
+        elif "NUM_METGRID_LEVELS" in ds.ncattrs():
+            nlev = int(ds.getncattr("NUM_METGRID_LEVELS"))
+        else:
+            sys.exit(f"{percorso}: manca la dimensione num_metgrid_levels (dimensioni: {sorted(ds.dimensions)})")
+        if "NUM_METGRID_SOIL_LEVELS" not in ds.ncattrs():
+            sys.exit(f"{percorso}: manca l'attributo NUM_METGRID_SOIL_LEVELS (attributi: {sorted(ds.ncattrs())[:40]})")
+        nsoil = int(ds.getncattr("NUM_METGRID_SOIL_LEVELS"))
+    if nsoil < 1:
+        sys.exit(f"{percorso}: metgrid non ha trovato livelli di suolo (NUM_METGRID_SOIL_LEVELS = 0): "
+                 "controllare che ungrib scriva ST/SM (Vtable.ECMWF_OD)")
+    return nlev, nsoil
 
 
 def main():

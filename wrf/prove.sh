@@ -41,6 +41,33 @@ for da, a in ((0, 16), (16, 32), (32, 48)):
 print("namelist ok")
 EOF
 
+passo "file met_em fatti come quelli di metgrid 4.7 (livelli letti dalla dimensione e dall'attributo)"
+python3 - "$T" <<'EOF'
+import subprocess, sys
+from netCDF4 import Dataset
+t = sys.argv[1]
+def crea(nome, nlev=34, nsoil=4):
+    with Dataset(f"{t}/{nome}", "w") as ds:
+        ds.createDimension("Time", None)
+        ds.createDimension("num_metgrid_levels", nlev)
+        ds.createDimension("west_east", 3)
+        ds.setncattr("TITLE", "OUTPUT FROM METGRID V4.7.0")
+        if nsoil is not None:
+            ds.setncattr("NUM_METGRID_SOIL_LEVELS", nsoil)
+def info(nome):
+    return subprocess.run(["python3", "wrf/config.py", "metgrid-info", f"{t}/{nome}"], capture_output=True, text=True)
+crea("met_ok.nc")
+r = info("met_ok.nc")
+assert r.stdout.split() == ["34", "4"], (r.stdout, r.stderr)
+crea("met_zero.nc", nsoil=0)
+r = info("met_zero.nc")
+assert r.returncode != 0 and "livelli di suolo" in r.stderr, r
+crea("met_senza.nc", nsoil=None)
+r = info("met_senza.nc")
+assert r.returncode != 0 and "NUM_METGRID_SOIL_LEVELS" in r.stderr, r
+print("met_em ok")
+EOF
+
 passo "file WRF e geo_em inventati"
 python3 wrf/prova_sintetica.py --out "$T/sint" --geo "$T/geo"
 
