@@ -31,6 +31,7 @@ from scipy.interpolate import LinearNDInterpolator  # noqa: E402
 from scipy.spatial import Delaunay  # noqa: E402
 
 import previsioni_castelli as pc  # noqa: E402
+from orarie import disegna_orarie  # noqa: E402
 
 G0, RD, CP, LV, EPS = 9.80665, 287.04, 1004.0, 2.5e6, 0.622
 KAPPA = RD / CP
@@ -232,6 +233,7 @@ def main():
     ap.add_argument("--n", type=int, default=80, help="punti per lato della griglia delle mappe")
     ap.add_argument("--senza-stazioni", action="store_true")
     ap.add_argument("--max-stazioni", type=int, default=60)
+    ap.add_argument("--senza-orarie", action="store_true", help="non disegnare le immagini orarie (una per ora e variabile)")
     ap.add_argument("--da-ora", default="", help="ora locale ISO da cui partire (default: l'ora attuale)")
     a = ap.parse_args()
     Path(a.out).mkdir(parents=True, exist_ok=True)
@@ -267,6 +269,7 @@ def main():
     ora = datetime.fromisoformat(a.da_ora) if a.da_ora else datetime.now().replace(minute=0, second=0, microsecond=0)
     i0 = next((i for i, t in enumerate(tempi) if t >= ora), 0)
     tempi = tempi[i0:]
+    tempi_utc = list(tempi_utc[i0:])
     c = {k: (v[i0:] if isinstance(v, np.ndarray) else v) for k, v in c.items()}
     print(f"{len(tempi)} ore da {tempi[0]:%a %d %H:%M} a {tempi[-1]:%a %d %H:%M} (ora locale)")
 
@@ -309,6 +312,8 @@ def main():
     creati = pc.disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, a.out)
     for f in creati:
         print("Creato:", f)
+    if not a.senza_orarie:
+        disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, a.ciclo, a.out)
 
     iy = int(np.abs(lat_f - pc.STAZIONE[1]).argmin())
     ix = int(np.abs(lon_f - pc.STAZIONE[2]).argmin())

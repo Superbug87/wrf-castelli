@@ -107,7 +107,40 @@ EOF
 
 passo "mappe da wrfout inventati"
 python3 wrf/postprocess.py --uscite "$T/sint" --out "$T/mappe" --ciclo 2026101600 --senza-stazioni --da-ora 2026-10-16T08:00
-[ "$(find "$T/mappe" -name '*.png' | wc -l)" -ge 9 ] || { echo "mancano mappe"; exit 1; }
+[ "$(find "$T/mappe" -maxdepth 1 -name '*.png' | wc -l)" -ge 9 ] || { echo "mancano mappe"; exit 1; }
+
+passo "immagini orarie: una per ora e variabile, con indice"
+python3 - "$T/mappe/orarie" <<'EOF2'
+import json, sys
+from pathlib import Path
+d = Path(sys.argv[1]); idx = json.loads((d / "indice.json").read_text())
+assert idx["ciclo"] == "2026101600" and idx["run"] == "2026-10-16T00:00:00Z", idx
+assert len(idx["variabili"]) >= 9 and len(idx["ore"]) >= 24, (len(idx["variabili"]), len(idx["ore"]))
+for v in idx["variabili"]:
+    for t in idx["ore"]:
+        f = d / idx["ciclo"] / v["id"] / (t[:13].replace("-", "").replace("T", "") + ".png")
+        assert f.stat().st_size > 5000, f
+print("orarie ok:", len(idx["variabili"]), "variabili x", len(idx["ore"]), "ore")
+EOF2
+
+passo "pubblicazione nel ramo risultati (su un repository finto): un solo commit, due cicli di immagini orarie"
+R="$T/pubblica"; rm -rf "$R"; mkdir -p "$R"; git init -q --bare "$R/remoto.git"
+for c in 2026101600 2026101612 2026101700; do
+  rm -rf "$R/img"; mkdir -p "$R/img/orarie/$c/temperatura_2m"; echo x > "$R/img/01_t.png"
+  echo x > "$R/img/orarie/$c/temperatura_2m/a.png"; echo "{\"ciclo\": \"$c\"}" > "$R/img/orarie/indice.json"
+  REPO_URL="$R/remoto.git" GITHUB_REPOSITORY=u/r bash wrf/pubblica.sh "$R/img" "$c" 2>/dev/null
+done
+git clone -q -b risultati "$R/remoto.git" "$R/vedi"
+[ "$(git -C "$R/vedi" rev-list --count HEAD)" = 1 ] || { echo "la storia si accumula"; exit 1; }
+[ "$(ls "$R/vedi/orarie" | tr '\n' ' ')" = "2026101612 2026101700 indice.json " ] || { echo "cicli orari sbagliati"; exit 1; }
+
+passo "pagina del sito: sintassi del JavaScript"
+python3 - "$T/pagina.js" <<'EOF3'
+import re, sys
+html = open("sito/previsioni-wrf.html", encoding="utf-8").read()
+open(sys.argv[1], "w", encoding="utf-8").write(re.search(r"<script>(.*?)</script>", html, re.S).group(1))
+EOF3
+if command -v node >/dev/null; then node --check "$T/pagina.js" && echo "pagina ok"; else echo "node non c'e': salto"; fi
 
 passo "movimento della pioggia su un caso inventato"
 python3 - <<'EOF'

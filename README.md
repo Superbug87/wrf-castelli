@@ -57,7 +57,14 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
 
 ## Dove trovo i risultati
 - Ramo **`risultati`** del repository: la cartella `ultimo/` e il suo `README.md` con tutte le immagini
-  (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 14 giorni.
+  (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 28 cicli (14 giorni).
+- Stesso ramo, cartella **`orarie/`**: una immagine per ogni ora e per ogni tipo di mappa (solo tipo, ora del run e ora
+  della mappa, senza descrizioni), degli ultimi 2 cicli; `orarie/indice.json` elenca variabili e ore. Il ramo viene
+  riscritto con un solo commit a ogni pubblicazione, così la storia non cresce.
+- **Sul sito Meteo Velletri**: la pagina `sito/previsioni-wrf.html` (un solo file, senza dipendenze) sfoglia le immagini
+  orarie: scelta del tipo di mappa, cursore delle ore, tasto play, frecce, scorrimento col dito, salto al giorno.
+  Va caricata sul sito (FTP) e legge le immagini direttamente da GitHub (`raw.githubusercontent.com`), che le tiene in
+  cache circa 5 minuti: si aggiorna da sola quando esce un nuovo ciclo. Si può anche incorporare con un `<iframe>`.
 - In *Actions → l'esecuzione → Artifacts*: `mappe` (le immagini) e, se qualcosa va storto, i log.
 
 ## Cosa fa e cosa non fa
@@ -158,7 +165,8 @@ La chiave della cache parziale (`wrf-src-v1-…`) non dipende dagli script: una 
 - `wrf/dominio.py` — geometria dei tre domini · `wrf/config.py` — namelist di WPS e WRF
 - `wrf/dipendenze.sh`, `costruisci.sh` (a tappe, con avanzamento e guardiano), `statico.sh`, `esegui.sh`, `pubblica.sh`
 - `wrf/scarica_ecmwf.py` + `wrf/Vtable.ECMWF_OD` — dati ECMWF · `wrf/scarica_gfs.py` — alternativa GFS
-- `wrf/postprocess.py` — da `wrfout` alle mappe
+- `wrf/postprocess.py` — da `wrfout` alle mappe · `wrf/orarie.py` — una immagine per ora e variabile + `indice.json`
+- `sito/previsioni-wrf.html` — pagina per sfogliare le immagini orarie (da caricare sul sito)
 - `wrf/stazioni_wrf.py` — stazioni Wunderground nel formato di WRF per il nudging
 - `wrf/scarica_sst.py` — temperatura del mare MUR nel formato intermedio di WPS (campo `SST`)
 - `wrf/radar.py` — scarico del radar Radar-DPC, posizione sulla mappa, movimento · `wrf/pioggia_radar.py` — verifica e

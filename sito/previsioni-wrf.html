@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Previsioni WRF Castelli Romani</title>
+<style>
+  :root {
+    --sfondo: #f3f2ee; --carta: #ffffff; --testo: #14130f; --sec: #5d5b54; --linea: #d8d6cc;
+    --acc: #2a78d6; --acc-testo: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tema="chiaro"]) {
+      --sfondo: #141412; --carta: #1f1f1c; --testo: #f1f0ea; --sec: #a9a79d; --linea: #3a3a35; --acc: #5b9cf0; --acc-testo: #0b0b0b;
+    }
+  }
+  :root[data-tema="scuro"] {
+    --sfondo: #141412; --carta: #1f1f1c; --testo: #f1f0ea; --sec: #a9a79d; --linea: #3a3a35; --acc: #5b9cf0; --acc-testo: #0b0b0b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--sfondo); color: var(--testo); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 12px 16px 24px; }
+  h1 { font-size: 1.1rem; margin: 4px 0 10px; }
+  .righe { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+  .righe button { flex: none; }
+  button { font: inherit; color: var(--testo); background: var(--carta); border: 1px solid var(--linea); border-radius: 999px;
+           padding: 8px 14px; min-height: 40px; cursor: pointer; }
+  button[aria-pressed="true"], button.attivo { background: var(--acc); color: var(--acc-testo); border-color: var(--acc); font-weight: 600; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--acc); outline-offset: 2px; }
+  .quadro { margin: 10px 0; background: var(--carta); border: 1px solid var(--linea); border-radius: 12px; overflow: hidden;
+            touch-action: pan-y; position: relative; }
+  .quadro img { display: block; width: 100%; height: auto; aspect-ratio: 600 / 770; background: var(--carta); }
+  .quadro .msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--sec); }
+  .comandi { display: flex; align-items: center; gap: 8px; }
+  .comandi input[type=range] { flex: 1; min-width: 0; height: 40px; accent-color: var(--acc); }
+  .comandi button { width: 44px; padding: 0; font-size: 1.1rem; }
+  .ora { display: flex; justify-content: space-between; margin: 6px 2px 10px; color: var(--sec); font-size: .9rem; font-variant-numeric: tabular-nums; }
+  .ora b { color: var(--testo); }
+  small { color: var(--sec); display: block; margin-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Previsioni WRF · Castelli Romani</h1>
+  <div id="variabili" class="righe" role="group" aria-label="Tipo di mappa"></div>
+  <div id="quadro" class="quadro"><img id="img" alt="" draggable="false"><div id="msg" class="msg">Carico…</div></div>
+  <div class="comandi">
+    <button id="indietro" aria-label="Ora precedente">◀</button>
+    <button id="play" aria-label="Avvia">▶</button>
+    <button id="avanti" aria-label="Ora successiva">▶|</button>
+    <input id="cursore" type="range" min="0" max="0" value="0" aria-label="Ora della mappa">
+  </div>
+  <div class="ora"><span id="ora"></span><span id="passo"></span></div>
+  <div id="giorni" class="righe" role="group" aria-label="Giorno"></div>
+  <small>Esperimento personale, non un servizio ufficiale: non sostituisce bollettini e allerte della Protezione Civile.</small>
+</main>
+<script>
+"use strict";
+// Dove il calcolo pubblica le immagini (ramo "risultati" del repository).
+const BASE = "https://raw.githubusercontent.com/Superbug87/wrf-castelli/risultati/orarie/";
+const FUSO = "Europe/Rome";
+
+const el = id => document.getElementById(id);
+const fmtOra = new Intl.DateTimeFormat("it-IT", { timeZone: FUSO, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const fmtGiorno = new Intl.DateTimeFormat("it-IT", { timeZone: FUSO, weekday: "short", day: "numeric" });
+const chiaveGiorno = new Intl.DateTimeFormat("sv-SE", { timeZone: FUSO });         // AAAA-MM-GG
+const oraLocale = new Intl.DateTimeFormat("en-GB", { timeZone: FUSO, hour: "2-digit", hourCycle: "h23" });
+
+let indice = null, variabile = null, k = 0, timer = null;
+const cache = new Map();
+
+function salva(chiave, valore) { try { localStorage.setItem(chiave, valore); } catch (e) { /* facoltativo */ } }
+function leggi(chiave) { try { return localStorage.getItem(chiave); } catch (e) { return null; } }
+
+const url = (v, i) => `${BASE}${indice.ciclo}/${v}/${indice.ore[i].slice(0, 13).replace(/[-T]/g, "")}.png`;
+
+function immagine(v, i) {                     // una sola Image per URL: serve da precaricamento
+  const u = url(v, i);
+  if (!cache.has(u)) { const im = new Image(); im.src = u; cache.set(u, im); }
+  return cache.get(u);
+}
+
+function mostra(i) {
+  k = Math.max(0, Math.min(indice.ore.length - 1, i));
+  const im = immagine(variabile, k), img = el("img");
+  el("msg").style.display = "none";
+  img.onerror = () => { el("msg").textContent = "Immagine non disponibile (la previsione è in aggiornamento?). Riprova tra qualche minuto."; el("msg").style.display = "grid"; };
+  img.src = im.src;
+  const v = indice.variabili.find(x => x.id === variabile);
+  img.alt = `${v.titolo}, ${fmtOra.format(new Date(indice.ore[k]))}`;
+  el("cursore").value = k;
+  el("ora").innerHTML = `<b>${fmtOra.format(new Date(indice.ore[k]))}</b>`;
+  const h = indice.run ? Math.round((new Date(indice.ore[k]) - new Date(indice.run)) / 3.6e6) : null;
+  el("passo").textContent = h === null ? "" : `+${h} h dal run`;
+  document.querySelectorAll("#giorni button").forEach(b => b.classList.toggle("attivo", b.dataset.giorno === chiaveGiorno.format(new Date(indice.ore[k]))));
+  for (let d = 1; d <= 3 && k + d < indice.ore.length; d++) immagine(variabile, k + d);   // le prossime, per non vedere il caricamento
+}
+
+function precarica() {                        // il resto della variabile, a poco a poco
+  let i = 0;
+  const passo = () => { if (i < indice.ore.length) { immagine(variabile, i++); setTimeout(passo, 120); } };
+  passo();
+}
+
+function scegli(v) {
+  variabile = v; salva("wrf_variabile", v);
+  document.querySelectorAll("#variabili button").forEach(b => b.setAttribute("aria-pressed", b.dataset.v === v));
+  mostra(k); precarica();
+}
+
+function stop() { if (timer) { clearInterval(timer); timer = null; } el("play").textContent = "▶"; el("play").setAttribute("aria-label", "Avvia"); }
+function play() {
+  if (timer) return stop();
+  if (k >= indice.ore.length - 1) mostra(0);
+  el("play").textContent = "❚❚"; el("play").setAttribute("aria-label", "Pausa");
+  timer = setInterval(() => { if (k >= indice.ore.length - 1) return stop(); mostra(k + 1); }, 450);
+}
+
+function costruisci() {
+  const vb = el("variabili"); vb.textContent = "";
+  for (const v of indice.variabili) {
+    const b = document.createElement("button");
+    b.textContent = v.titolo; b.dataset.v = v.id; b.setAttribute("aria-pressed", "false");
+    b.onclick = () => scegli(v.id);
+    vb.appendChild(b);
+  }
+  const gb = el("giorni"); gb.textContent = "";
+  const visti = new Map();
+  indice.ore.forEach((t, i) => {
+    const g = chiaveGiorno.format(new Date(t));
+    const ore = Number(oraLocale.format(new Date(t)));
+    const migliore = visti.get(g);
+    if (!migliore || Math.abs(ore - 14) < Math.abs(migliore.ore - 14)) visti.set(g, { i, ore, t });   // l'ora più vicina alle 14
+  });
+  for (const [g, { i, t }] of visti) {
+    const b = document.createElement("button");
+    b.textContent = fmtGiorno.format(new Date(t)); b.dataset.giorno = g;
+    b.onclick = () => { stop(); mostra(i); };
+    gb.appendChild(b);
+  }
+  el("cursore").max = indice.ore.length - 1;
+}
+
+function oraPiuVicina(t0) {                   // l'ora della mappa più vicina a t0 (ms)
+  let best = 0;
+  indice.ore.forEach((t, i) => { if (Math.abs(new Date(t) - t0) < Math.abs(new Date(indice.ore[best]) - t0)) best = i; });
+  return best;
+}
+
+async function carica(primaVolta) {
+  try {
+    const r = await fetch(BASE + "indice.json", { cache: "no-cache" });
+    if (!r.ok) throw new Error(r.status);
+    const nuovo = await r.json();
+    if (!primaVolta && indice && nuovo.ciclo === indice.ciclo) return;        // niente di nuovo
+    const orario = indice ? new Date(indice.ore[k]).getTime() : Date.now();   // dopo un aggiornamento resta sulla stessa ora
+    indice = nuovo; cache.clear(); costruisci();
+    const salvata = leggi("wrf_variabile");
+    variabile = indice.variabili.some(v => v.id === (variabile || salvata)) ? (variabile || salvata) : indice.variabili[0].id;
+    k = oraPiuVicina(orario);
+    scegli(variabile);
+  } catch (e) {
+    if (primaVolta) { el("msg").textContent = "Previsione non raggiungibile. Riprova tra qualche minuto."; el("msg").style.display = "grid"; }
+  }
+}
+
+el("indietro").onclick = () => { stop(); mostra(k - 1); };
+el("avanti").onclick = () => { stop(); mostra(k + 1); };
+el("play").onclick = play;
+el("cursore").oninput = e => { stop(); mostra(Number(e.target.value)); };
+document.addEventListener("keydown", e => {
+  if (!indice || e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowLeft") { stop(); mostra(k - 1); }
+  else if (e.key === "ArrowRight") { stop(); mostra(k + 1); }
+  else if (e.key === " ") { e.preventDefault(); play(); }
+});
+let x0 = null;                                // scorrimento col dito sull'immagine
+el("quadro").addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, { passive: true });
+el("quadro").addEventListener("touchend", e => {
+  if (x0 === null || !indice) return;
+  const dx = e.changedTouches[0].clientX - x0; x0 = null;
+  if (Math.abs(dx) > 40) { stop(); mostra(k + (dx < 0 ? 1 : -1)); }
+}, { passive: true });
+
+carica(true);
+setInterval(() => carica(false), 15 * 60 * 1000);
+</script>
+</body>
+</html>
