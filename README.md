@@ -9,7 +9,7 @@ una ogni 6 ore, e le pubblica nel ramo `risultati`.
 ## Prima di cominciare
 - Il repository deve essere **pubblico** (lo è): i server sono da 4 processori e i minuti sono illimitati.
   In un repository privato i server hanno 2 processori e 2000 minuti al mese: non bastano.
-- Facoltativo: la chiave Wunderground per correggere temperatura e umidità con le stazioni.
+- Facoltativo ma consigliato: la chiave Wunderground, per far entrare le stazioni dentro WRF (vedi sotto).
   Su GitHub: *Settings → Secrets and variables → Actions → New repository secret*, nome `WU_API_KEY`.
 
 ## Come si avvia (anche da telefono)
@@ -38,9 +38,19 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
 - In *Actions → l'esecuzione → Artifacts*: `mappe` (le immagini) e, se qualcosa va storto, i log.
 
 ## Cosa fa e cosa non fa
-- WRF è alimentato da un solo modello globale per volta (ECMWF o GFS). Le **stazioni Wunderground non entrano dentro WRF**: dopo il calcolo
-  correggono temperatura e umidità (scarto medio delle stazioni sensate, che si smorza in circa 6 ore).
-  Assimilarle nel modello (WRFDA) è un lavoro a parte.
+- WRF è alimentato da un solo modello globale per volta (ECMWF o GFS).
+- **Stazioni Wunderground dentro WRF (nudging).** Con la chiave `WU_API_KEY`, prima del calcolo si cercano le
+  stazioni nei tre domini (fitte nel dominio a 1 km, fino a 40; 30 nel dominio a 3 km; 20 nel dominio a 9 km),
+  se ne scarica lo storico delle ultime 24 ore, si controllano (valori plausibili, quota dichiarata coerente con il
+  terreno del modello, scarto dalle stazioni vicine riportate alla stessa quota) e si mediano ogni 15 minuti.
+  WRF, dall'inizio del ciclo fino all'ultima osservazione, spinge temperatura e umidità verso quei valori
+  (raggio di influenza 100/50/25 km nei tre domini, tempo di rilassamento circa mezz'ora); poi prosegue libero
+  dallo stato raggiunto. Il **vento delle stazioni non viene usato**: gli anemometri amatoriali sono quasi sempre
+  riparati. Senza chiave o senza dati utili WRF gira senza nudging. In questo caso le mappe applicano come prima
+  la correzione dopo il calcolo; con il nudging non si corregge una seconda volta.
+  Limiti: i sensori amatoriali sono di qualità diversa (quelli al sole di giorno scaldano) e l'effetto sulle ore
+  lontane dall'ultima osservazione è piccolo: il nudging migliora lo stato di partenza, non cancella gli errori del
+  modello globale. Assimilare le stazioni con un'analisi vera (WRFDA) sarebbe un lavoro a parte.
 - **Raffiche = stima**: massimo orario del vento a 10 m (diagnostica di WRF) × 1,4.
 - **CAPE = stima** da parcella di superficie. Controllata contro MetPy su 5 profili: scarti sotto l'1%.
 - ECMWF (come GFS) ha punti ogni 25 km: l'1 km viene da WRF e dall'orografia, non dal dato di partenza.
@@ -55,6 +65,7 @@ Provato davvero (in un ambiente senza compilatore Fortran):
 namelist (letti da f90nml, domini annidati verificati), scelta del ciclo e scarico dei dati ECMWF veri,
 `ungrib` compilato e fatto girare su file ECMWF veri con la tabella `Vtable.ECMWF_OD` (88 campi per ora, suolo
 e neve compresi),
+file delle stazioni (inventate) riletto con le stesse istruzioni di lettura di WRF,
 CAPE contro MetPy, mappe a partire da file `wrfout` inventati con la stessa struttura di WRF, pubblicazione
 nel ramo `risultati`, sintassi del workflow (actionlint) e degli script (shellcheck).
 
@@ -68,5 +79,6 @@ Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifac
 - `wrf/dipendenze.sh`, `costruisci.sh`, `statico.sh`, `esegui.sh`, `pubblica.sh`
 - `wrf/scarica_ecmwf.py` + `wrf/Vtable.ECMWF_OD` — dati ECMWF · `wrf/scarica_gfs.py` — alternativa GFS
 - `wrf/postprocess.py` — da `wrfout` alle mappe
+- `wrf/stazioni_wrf.py` — stazioni Wunderground nel formato di WRF per il nudging
 - `wrf/prova_sintetica.py` — file `wrfout` inventati per collaudare le mappe senza WRF
 - `previsioni_castelli.py` — mappe e correzione con le stazioni (usato da `postprocess.py`)

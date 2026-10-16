@@ -72,7 +72,7 @@ def namelist_wps(inizio, fine, geog, prefisso):
 """
 
 
-def namelist_input(inizio, fine, riprendi, nlev, nsoil):
+def namelist_input(inizio, fine, riprendi, nlev, nsoil, obs_minuti=None, obs_vento=False):
     ore = int(round((fine - inizio).total_seconds() / 3600))
     starts = D.parent_starts()
 
@@ -99,7 +99,11 @@ def namelist_input(inizio, fine, riprendi, nlev, nsoil):
     t += " output_diagnostics = 1,\n auxhist3_outname = 'wrfxtrm_d<domain>_<date>',\n"
     t += riga("auxhist3_interval", [60] * 3)
     t += riga("frames_per_auxhist3", [1000] * 3)
-    t += " io_form_auxhist3 = 2,\n debug_level = 0,\n/\n\n"
+    t += " io_form_auxhist3 = 2,\n debug_level = 0,\n"
+    if obs_minuti is not None:                       # le osservazioni si rileggono ogni 3 minuti di simulazione
+        t += riga("auxinput11_interval_s", [180] * 3)
+        t += riga("auxinput11_end_h", [int(obs_minuti // 60) + 2] * 3)
+    t += "/\n\n"
 
     t += "&domains\n"
     t += f" time_step = {TIME_STEP},\n time_step_fract_num = 0,\n time_step_fract_den = 1,\n max_dom = 3,\n"
@@ -139,6 +143,23 @@ def namelist_input(inizio, fine, riprendi, nlev, nsoil):
     t += riga("moist_adv_opt", [1] * 3) + riga("scalar_adv_opt", [1] * 3)
     t += " gwd_opt = 0,\n/\n\n"
 
+    if obs_minuti is not None:
+        # Nudging verso le stazioni fino all'ultima osservazione (fdda_end, minuti dall'inizio del ciclo);
+        # dopo il modello prosegue libero. Raggi di influenza (km) piccoli nei domini fini: la quota conta.
+        t += "&fdda\n"
+        t += riga("obs_nudge_opt", [1] * 3) + " max_obs = 150000,\n"
+        t += riga("fdda_start", ["0."] * 3) + riga("fdda_end", [f"{float(obs_minuti):.1f}"] * 3)
+        t += riga("obs_nudge_wind", [1 if obs_vento else 0] * 3) + riga("obs_coef_wind", ["6.E-4"] * 3)
+        t += riga("obs_nudge_temp", [1] * 3) + riga("obs_coef_temp", ["6.E-4"] * 3)
+        t += riga("obs_nudge_mois", [1] * 3) + riga("obs_coef_mois", ["6.E-4"] * 3)
+        t += riga("obs_rinxy", ["100.", "50.", "25."])
+        t += " obs_rinsig = 0.1,\n"
+        t += riga("obs_twindo", ["0.6666667"] * 3) + " obs_npfi = 10,\n"
+        t += riga("obs_ionf", [2] * 3) + " obs_idynin = 0,\n obs_dtramp = 40.,\n"
+        t += " obs_prt_max = 10,\n obs_prt_freq = 100, 100, 100,\n"
+        t += " obs_ipf_in4dob = .false.,\n obs_ipf_errob = .false.,\n obs_ipf_nudob = .false.,\n obs_ipf_init = .true.,\n"
+        t += "/\n\n"
+
     t += "&bdy_control\n spec_bdy_width = 5,\n spec_zone = 1,\n relax_zone = 4,\n"
     t += riga("specified", [".true.", ".false.", ".false."]) + riga("nested", [".false.", ".true.", ".true."])
     t += "/\n\n&namelist_quilt\n nio_tasks_per_group = 0,\n nio_groups = 1,\n/\n"
@@ -167,6 +188,9 @@ def main():
     i.add_argument("--a", type=int, required=True)
     i.add_argument("--nlev", type=int, default=34)
     i.add_argument("--nsoil", type=int, default=4)
+    i.add_argument("--obs-minuti", type=int, default=None,
+                   help="attiva il nudging sulle stazioni fino a questo minuto dall'inizio del ciclo")
+    i.add_argument("--obs-vento", action="store_true", help="nudging anche del vento (sconsigliato)")
     m = sub.add_parser("metgrid-info")
     m.add_argument("file")
     a = ap.parse_args()
@@ -180,7 +204,7 @@ def main():
         if a.a <= a.da:
             sys.exit("--a deve essere maggiore di --da")
         sys.stdout.write(namelist_input(c + timedelta(hours=a.da), c + timedelta(hours=a.a), a.da > 0,
-                                        a.nlev, a.nsoil))
+                                        a.nlev, a.nsoil, a.obs_minuti, a.obs_vento))
     else:
         print(*info_metgrid(a.file))
 

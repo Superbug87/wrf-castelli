@@ -65,6 +65,10 @@ prepara)
   esito_wrf rsl.error.0000
   ls -la wrfinput_d0* wrfbdy_d01
   rm -rf "$LAVORO/WPS"
+
+  echo "== Stazioni Wunderground per il nudging (se c'e' la chiave)"
+  python3 "$QUI/stazioni_wrf.py" --ciclo "$CICLO" --geo "$GEO" --out . ||
+    { echo "!! Stazioni non utilizzabili: WRF girera' senza nudging"; rm -f OBS_DOMAIN* obs_fdda_end.txt; }
   ;;
 modello)
   DA=${3:?da ora}; A=${4:?a ora}
@@ -72,7 +76,12 @@ modello)
   if [ "$DA" -gt 0 ]; then                     # ripresa: servono wrfinput, wrfbdy e il restart del segmento prima
     tar -xzf "$LAVORO/stato.tgz" -C "$LAVORO/run"
   fi
-  python3 "$QUI/config.py" input --ciclo "$CICLO" --da "$DA" --a "$A" > namelist.input
+  OBS=()
+  if [ -s obs_fdda_end.txt ] && [ -s OBS_DOMAIN301 ]; then
+    OBS=(--obs-minuti "$(tr -d '[:space:]' < obs_fdda_end.txt)")
+    echo "nudging sulle stazioni fino a +$(cat obs_fdda_end.txt) minuti"
+  fi
+  python3 "$QUI/config.py" input --ciclo "$CICLO" --da "$DA" --a "$A" "${OBS[@]}" > namelist.input
   rm -f rsl.*
   echo "== wrf.exe da +${DA} h a +${A} h su $(nproc) processori ($(date -u +%H:%M) UTC)"
   mpirun -np "$(nproc)" ./wrf.exe > wrf.log 2>&1 || { tail -n 40 wrf.log; esito_wrf rsl.error.0000; exit 1; }
@@ -81,8 +90,10 @@ modello)
   ls -la wrfout_d03_* wrfrst_d03_* 2>/dev/null | tail -n 8 || true
   # i nomi dei file di WRF contengono ":" e GitHub non li accetta come allegati: li impacchettiamo
   FINE=$(date -u -d "${CICLO:0:8} ${CICLO:8:2}:00 UTC + ${A} hours" +%Y-%m-%d_%H:%M:%S)
-  tar -czf "$LAVORO/stato.tgz" wrfinput_d0* wrfbdy_d01 wrfrst_d0*_"$FINE"
-  tar -czf "$LAVORO/uscite.tgz" wrfout_d03_* wrfxtrm_d03_*
+  # le osservazioni delle stazioni servono anche ai segmenti dopo, e la loro presenza va saputa dalle mappe
+  EXTRA=(); [ -s obs_fdda_end.txt ] && EXTRA=(OBS_DOMAIN* obs_fdda_end.txt)
+  tar -czf "$LAVORO/stato.tgz" wrfinput_d0* wrfbdy_d01 wrfrst_d0*_"$FINE" "${EXTRA[@]}"
+  tar -czf "$LAVORO/uscite.tgz" wrfout_d03_* wrfxtrm_d03_* "${EXTRA[@]:+obs_fdda_end.txt}"
   ls -la "$LAVORO"/*.tgz
   ;;
 *)

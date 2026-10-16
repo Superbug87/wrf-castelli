@@ -17,7 +17,7 @@ import glob
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -278,7 +278,18 @@ def main():
                    f"sono ricampionate a {2 * pc.MEZZO_LAT * 111.32 / (a.n - 1):.1f} km. "
                    "Raffiche: stima, massimo orario del vento a 10 m x 1,4. CAPE: stima da parcella di superficie.")
 
-    if not a.senza_stazioni and os.environ.get("WU_API_KEY"):
+    # se le stazioni sono già state assimilate da WRF (nudging) non si corregge una seconda volta
+    file_obs = sorted(Path(a.uscite).rglob("obs_fdda_end.txt"))
+    nudging = bool(file_obs) and bool(a.ciclo)
+    if nudging:
+        fine_utc = (datetime.strptime(a.ciclo, "%Y%m%d%H") + timedelta(minutes=int(file_obs[0].read_text().split()[0])))
+        fine_loc = fine_utc.replace(tzinfo=timezone.utc).astimezone(roma)
+        banner += " + stazioni WU assimilate"
+        modello_txt += (f" Le stazioni Wunderground sono state assimilate nel modello (temperatura e umidità, "
+                        f"nudging) fino alle {fine_loc:%H:%M}; dopo il modello prosegue libero.")
+        print(f"Stazioni assimilate in WRF fino alle {fine_loc:%H:%M} (ora locale): nessuna correzione successiva.")
+
+    if not nudging and not a.senza_stazioni and os.environ.get("WU_API_KEY"):
         chiave = os.environ["WU_API_KEY"]
         pc.SEGRETI.append(chiave)
         try:
