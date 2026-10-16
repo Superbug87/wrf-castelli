@@ -15,10 +15,25 @@ ln -sf /usr/lib/x86_64-linux-gnu/libnetcdf* "$NC/lib/"
 export NETCDF="$NC"
 export NETCDF_classic=1
 export WRFIO_NCD_LARGE_FILE_SUPPORT=1
-export JASPERLIB=/usr/lib/x86_64-linux-gnu
-export JASPERINC=/usr/include
 
 cd "$SRC"
+# JasPer (decodifica GRIB2) non e' piu' un pacchetto Ubuntu: lo compiliamo in versione statica,
+# cosi' ungrib.exe non ne ha bisogno quando gira negli altri job
+JAS=$HOME/jasper
+if [ ! -f "$JAS/.fatto" ]; then
+  echo "== JasPer 2.0.33"
+  [ -d jasper ] || git clone -q --depth 1 --branch version-2.0.33 https://github.com/jasper-software/jasper.git
+  cmake -S jasper -B jasper-build -DCMAKE_INSTALL_PREFIX="$JAS" -DJAS_ENABLE_SHARED=OFF -DJAS_ENABLE_PROGRAMS=OFF \
+    -DJAS_ENABLE_DOC=OFF -DJAS_ENABLE_LIBJPEG=OFF -DJAS_ENABLE_OPENGL=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    > jasper-cmake.log 2>&1 || { tail -n 30 jasper-cmake.log; exit 1; }
+  cmake --build jasper-build -j "$NPROC" > jasper-build.log 2>&1 || { tail -n 30 jasper-build.log; exit 1; }
+  cmake --install jasper-build > jasper-install.log 2>&1 || { tail -n 30 jasper-install.log; exit 1; }
+  touch "$JAS/.fatto"
+fi
+JASPERLIB=$(dirname "$(find "$JAS" -name 'libjasper.a' | head -n1)")
+export JASPERLIB JASPERINC="$JAS/include"
+echo "JasPer: $JASPERLIB"
+
 [ -d WRF ] || git clone --depth 1 --branch "$WRF_TAG" https://github.com/wrf-model/WRF.git
 [ -d WPS ] || git clone --depth 1 --branch "$WPS_TAG" https://github.com/wrf-model/WPS.git
 
