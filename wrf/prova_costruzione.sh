@@ -47,6 +47,13 @@ rc=0
 con_avanzamento "$D" "$D/lungo.log" 60 bash -c 'for i in 1 2 3 4 5 6 7 8 9 10; do echo "riga $i"; sleep 1; done' > /dev/null || rc=$?
 [ "$rc" = 0 ] || guasto "un comando attivo è stato fermato (uscita $rc)"
 
+echo "-- passo_guardato: riuscito passa, fallito stampa le ultime righe del log ed esce con 1"
+( cd "$D" && passo_guardato "prova ok" pg_ok.log 30 bash -c 'echo bene' ) > /dev/null || guasto "passo_guardato fallisce su un comando riuscito"
+rc=0
+( cd "$D" && passo_guardato "prova ko" pg_ko.log 30 bash -c 'echo "errore finto"; exit 5' ) > "$T/pg_ko.txt" 2>&1 || rc=$?
+[ "$rc" = 1 ] || guasto "passo_guardato: uscita $rc invece di 1"
+grep -q 'errore finto' "$T/pg_ko.txt" || guasto "passo_guardato non mostra il log del passo fallito"
+
 echo "-- clona: nessuna cartella a metà se il clone fallisce"
 cd "$T"
 ( clona finto "file://$T/non-esiste" main ) > /dev/null 2>&1 && guasto "il clone impossibile non ha dato errore"

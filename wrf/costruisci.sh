@@ -97,6 +97,20 @@ con_avanzamento() {
   return "$rc"
 }
 
+# passo_guardato NOME LOG SECONDI_MASSIMI comando [argomenti...]
+# Per i passi brevi (JasPer, configure) nella cartella corrente: avanzamento ogni 30 secondi, fermo dopo 5 minuti senza
+# progressi; se il passo non riesce stampa le ultime righe del log ed esce con 1.
+passo_guardato() {
+  local nome=$1 log=$PWD/$2 massimo=$3 rc=0
+  shift 3
+  PERIODO_SEC=30 STALLO_SEC=300 con_avanzamento "$PWD" "$log" "$massimo" "$@" || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "$nome: non riuscito (uscita $rc), ultime righe del log:"
+    tail -n 40 "$log" || true
+    exit 1
+  fi
+}
+
 # Un compilatore fermato di colpo può lasciare un .o a metà, che make crederebbe buono: butto gli ultimi due minuti
 scarta_oggetti_recenti() {
   find "$1" -name '*.o' -mmin -2 -delete 2>/dev/null || true
@@ -106,7 +120,7 @@ scarta_oggetti_recenti() {
 clona() {   # clona NOME URL RAMO_O_TAG
   [ -d "$1" ] && return 0
   rm -rf "$1.parziale"
-  git clone -q --depth 1 --branch "$3" "$2" "$1.parziale" || { rm -rf "$1.parziale"; return 1; }
+  timeout 600 git clone -q --depth 1 --branch "$3" "$2" "$1.parziale" || { rm -rf "$1.parziale"; return 1; }
   mv "$1.parziale" "$1"
 }
 
@@ -134,11 +148,11 @@ fase_prepara() {
   if [ ! -f "$JAS/.fatto" ]; then
     echo "== JasPer 2.0.33"
     clona jasper https://github.com/jasper-software/jasper.git version-2.0.33
-    cmake -S jasper -B jasper-build -DCMAKE_INSTALL_PREFIX="$JAS" -DJAS_ENABLE_SHARED=OFF -DJAS_ENABLE_PROGRAMS=OFF \
-      -DJAS_ENABLE_DOC=OFF -DJAS_ENABLE_LIBJPEG=OFF -DJAS_ENABLE_OPENGL=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-      > jasper-cmake.log 2>&1 || { tail -n 30 jasper-cmake.log; exit 1; }
-    cmake --build jasper-build -j "$NPROC" > jasper-build.log 2>&1 || { tail -n 30 jasper-build.log; exit 1; }
-    cmake --install jasper-build > jasper-install.log 2>&1 || { tail -n 30 jasper-install.log; exit 1; }
+    passo_guardato "JasPer: cmake" jasper-cmake.log 600 \
+      cmake -S jasper -B jasper-build -DCMAKE_INSTALL_PREFIX="$JAS" -DJAS_ENABLE_SHARED=OFF -DJAS_ENABLE_PROGRAMS=OFF \
+      -DJAS_ENABLE_DOC=OFF -DJAS_ENABLE_LIBJPEG=OFF -DJAS_ENABLE_OPENGL=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    passo_guardato "JasPer: compilazione" jasper-build.log 900 cmake --build jasper-build -j "$NPROC"
+    passo_guardato "JasPer: installazione" jasper-install.log 300 cmake --install jasper-build
     touch "$JAS/.fatto"
   fi
   ambiente
@@ -151,10 +165,11 @@ fase_prepara() {
     echo "== WRF: configure"
     cd "$SRC/WRF"
     local opt
-    opt=$(./configure < /dev/null 2>/dev/null | grep -E 'GNU \(gfortran/gcc\)' | grep -oP '\d+(?=\.\s+\(dmpar\))' | head -n1 || true)
+    # senza risposte il configure riscrive il menu all'infinito: si legge solo l'inizio e si chiude
+    opt=$(timeout 60 ./configure < /dev/null 2>/dev/null | grep -E 'GNU \(gfortran/gcc\)' | grep -oP '\d+(?=\.\s+\(dmpar\))' | head -n1 || true)
     opt=${opt:-34}
     echo "opzione scelta: $opt (gfortran, dmpar), nesting basic"
-    printf '%s\n1\n' "$opt" | ./configure > configure.log 2>&1 || { tail -n 40 configure.log; exit 1; }
+    passo_guardato "WRF: configure" configure.log 900 bash -c 'printf "%s\n1\n" "$1" | ./configure' _ "$opt"
     touch .configurato
   fi
   echo "preparazione finita"
@@ -193,10 +208,10 @@ fase_wps() {
     echo "== WPS: configure + compile"
     if [ ! -f .configurato ]; then
       local opt
-      opt=$(./configure < /dev/null 2>/dev/null | grep -E 'gfortran +\(serial\)' | grep -v NO_GRIB2 | grep -oP '^\s*\K\d+' | head -n1 || true)
+      opt=$(timeout 60 ./configure < /dev/null 2>/dev/null | grep -E 'gfortran +\(serial\)' | grep -v NO_GRIB2 | grep -oP '^\s*\K\d+' | head -n1 || true)
       opt=${opt:-1}
       echo "opzione scelta: $opt (gfortran, serial, GRIB2)"
-      echo "$opt" | ./configure > configure.log 2>&1 || { tail -n 40 configure.log; exit 1; }
+      passo_guardato "WPS: configure" configure.log 900 bash -c 'echo "$1" | ./configure' _ "$opt"
       touch .configurato
     fi
     con_avanzamento "$SRC/WPS" "$SRC/WPS/compile.log" 3600 ./compile || rc=$?
