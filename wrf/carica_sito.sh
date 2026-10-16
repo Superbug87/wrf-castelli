@@ -10,9 +10,23 @@ if [ -z "${FTP_HOST:-}" ] || [ -z "${FTP_USER:-}" ] || [ -z "${FTP_PASSWORD:-}" 
 fi
 CARTELLA=${FTP_CARTELLA:-}; CARTELLA=${CARTELLA#/}; CARTELLA=${CARTELLA%/}
 BASE="ftp://${FTP_HOST}${FTP_PORTA:+:$FTP_PORTA}/${CARTELLA:+$CARTELLA/}"
+carica() {   # carica FILE [opzioni di curl]
+  local f=$1; shift
+  curl --fail --silent --show-error --ssl --ftp-create-dirs --connect-timeout 30 --max-time 300 "$@" \
+       --user "${FTP_USER}:${FTP_PASSWORD}" -T "$f" "${BASE}$(basename "$f")"
+}
 for f in "$@"; do
-  curl --fail --silent --show-error --ssl --ftp-create-dirs --connect-timeout 30 --max-time 300 \
-       --user "${FTP_USER}:${FTP_PASSWORD}" -T "$f" "${BASE}$(basename "$f")" \
-    || { echo "!! Caricamento di $(basename "$f") non riuscito (controlla host, utente, password e cartella)"; exit 1; }
+  rc=0; carica "$f" || rc=$?
+  if [ "$rc" = 60 ]; then
+    # Capita sugli hosting condivisi: il certificato e' intestato a un nome diverso da quello del server FTP.
+    echo "::warning::Il certificato del server FTP non corrisponde al nome '${FTP_HOST}': ecco a chi e' intestato."
+    openssl s_client -connect "${FTP_HOST}:${FTP_PORTA:-21}" -starttls ftp </dev/null 2>/dev/null \
+      | openssl x509 -noout -subject -ext subjectAltName 2>/dev/null || true
+    echo "::warning::Carico lo stesso con TLS ma senza verificare l'identita' del server (la password non viaggia in chiaro)."
+    rc=0; carica "$f" --insecure || rc=$?
+  fi
+  if [ "$rc" != 0 ]; then
+    echo "!! Caricamento di $(basename "$f") non riuscito (controlla host, utente, password e cartella)"; exit 1
+  fi
   echo "caricato: $(basename "$f") -> ${CARTELLA:-/}"
 done
