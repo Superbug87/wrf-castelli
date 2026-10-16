@@ -32,7 +32,7 @@ def _tre(valore, fmt="{}"):
     return ", ".join(fmt.format(valore) for _ in range(3))
 
 
-def namelist_wps(inizio, fine, geog, prefisso, sst=False):
+def namelist_wps(inizio, fine, geog, prefisso, sst=False, risoluzione="default"):
     starts = D.parent_starts()
     fg = f"'{prefisso}', 'SST'" if sst else f"'{prefisso}'"   # SST: file scritti da scarica_sst.py
     return f"""&share
@@ -51,7 +51,7 @@ def namelist_wps(inizio, fine, geog, prefisso, sst=False):
  j_parent_start    = {", ".join(map(str, starts))},
  e_we              = {", ".join(map(str, D.E))},
  e_sn              = {", ".join(map(str, D.E))},
- geog_data_res     = 'default', 'default', 'default',
+ geog_data_res     = {_tre(risoluzione, "'{}'")},
  dx = {D.DX[0]},
  dy = {D.DX[0]},
  map_proj  = 'lambert',
@@ -201,6 +201,7 @@ def main():
     w.add_argument("--geog", default="/percorso/WPS_GEOG")
     w.add_argument("--pilota", choices=["ecmwf", "gfs"], default="ecmwf",
                    help="modello globale da cui WRF prende condizioni iniziali e al contorno")
+    w.add_argument("--res", default="default", help="geog_data_res di geogrid, es. fine+default per quota 30 m e suolo 10 m")
     w.add_argument("--sst", action="store_true", help="metgrid usa anche i file SST:* (temperatura del mare ad alta risoluzione)")
     i = sub.add_parser("input")
     i.add_argument("--ciclo", required=True)
@@ -218,7 +219,7 @@ def main():
     D.verifica()
     if a.cmd == "wps":
         c = _ciclo(a.ciclo)
-        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog, a.pilota.upper(), a.sst))
+        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog, a.pilota.upper(), a.sst, a.res))
     elif a.cmd == "input":
         c = _ciclo(a.ciclo)
         if a.a <= a.da:
