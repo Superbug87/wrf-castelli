@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<main>
+<main id="principale">
   <h1>Previsioni WRF · Castelli Romani</h1>
   <div id="variabili" class="righe" role="group" aria-label="Tipo di mappa"></div>
   <div id="quadro" class="quadro"><img id="img" alt="" draggable="false"><div id="msg" class="msg">Carico…</div></div>
@@ -182,6 +182,13 @@ el("quadro").addEventListener("touchend", e => {
   const dx = e.changedTouches[0].clientX - x0; x0 = null;
   if (Math.abs(dx) > 40) { stop(); mostra(k + (dx < 0 ? 1 : -1)); }
 }, { passive: true });
+
+// dentro Meteo Velletri (iframe): dice alla pagina quanto e' alta, così non restano spazi vuoti
+if (window.parent !== window) {
+  document.body.style.background = "transparent";          // prende lo sfondo della pagina che lo contiene
+  const invia = () => window.parent.postMessage({ wrfAltezza: el("principale").offsetHeight }, location.origin);
+  new ResizeObserver(invia).observe(el("principale")); window.addEventListener("load", invia);
+}
 
 carica(true);
 setInterval(() => carica(false), 15 * 60 * 1000);
