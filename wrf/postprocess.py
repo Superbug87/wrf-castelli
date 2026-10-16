@@ -227,7 +227,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--uscite", required=True, help="cartella con i wrfout_d03_* (anche in sottocartelle)")
     ap.add_argument("--out", default="mappe")
-    ap.add_argument("--ciclo", default="", help="AAAAMMGGHH del GFS usato, solo per il titolo")
+    ap.add_argument("--ciclo", default="", help="AAAAMMGGHH del ciclo usato, solo per il titolo")
+    ap.add_argument("--pilota", default="ecmwf", choices=["ecmwf", "gfs"], help="modello globale usato, solo per il titolo")
     ap.add_argument("--n", type=int, default=80, help="punti per lato della griglia delle mappe")
     ap.add_argument("--senza-stazioni", action="store_true")
     ap.add_argument("--max-stazioni", type=int, default=60)
@@ -270,9 +271,10 @@ def main():
     c = {k: (v[i0:] if isinstance(v, np.ndarray) else v) for k, v in c.items()}
     print(f"{len(tempi)} ore da {tempi[0]:%a %d %H:%M} a {tempi[-1]:%a %d %H:%M} (ora locale)")
 
-    ciclo_txt = f"GFS {a.ciclo[:8]} {a.ciclo[8:]}Z" if a.ciclo else "GFS"
+    pil = a.pilota.upper()
+    ciclo_txt = f"{pil} {a.ciclo[:8]} {a.ciclo[8:]}Z" if a.ciclo else pil
     banner = f"WRF 1 km ({ciclo_txt})"
-    modello_txt = ("WRF: modello fisico con tre domini annidati (9, 3 e 1 km) alimentato dal GFS; le mappe "
+    modello_txt = (f"WRF: modello fisico con tre domini annidati (9, 3 e 1 km) alimentato da {pil}; le mappe "
                    f"sono ricampionate a {2 * pc.MEZZO_LAT * 111.32 / (a.n - 1):.1f} km. "
                    "Raffiche: stima, massimo orario del vento a 10 m x 1,4. CAPE: stima da parcella di superficie.")
 

@@ -2,11 +2,16 @@ name: Previsione WRF Castelli Romani
 
 on:
   # schedule:                    # da riattivare quando la prima esecuzione manuale è andata a buon fine
-  #   - cron: "10 5 * * *"       # ogni giorno alle 05:10 UTC, quando il ciclo delle 00 UTC è completo
+  #   - cron: "40 8 * * *"       # ogni giorno alle 08:40 UTC: il ciclo ECMWF delle 00 UTC è pubblicato verso le 07:35
   workflow_dispatch:
     inputs:
+      pilota:
+        description: "Modello globale che dà le condizioni iniziali e al contorno"
+        type: choice
+        options: [ecmwf, gfs]
+        default: ecmwf
       ciclo:
-        description: "Ciclo GFS AAAAMMGGHH (vuoto = l'ultimo completo)"
+        description: "Ciclo AAAAMMGGHH (ECMWF: solo 00 o 12 UTC; vuoto = l'ultimo completo)"
         required: false
         default: ""
       ore:
@@ -96,11 +101,12 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # 3) Quale ciclo GFS e quante ore
+  # 3) Quale ciclo e quante ore
   pianifica:
     runs-on: ubuntu-22.04
     outputs:
       ciclo: ${{ steps.p.outputs.ciclo }}
+      pilota: ${{ steps.p.outputs.pilota }}
       ore: ${{ steps.p.outputs.ore }}
       seg: ${{ steps.p.outputs.seg }}
     steps:
@@ -108,19 +114,20 @@ jobs:
       - name: Scelta del ciclo
         id: p
         env:
+          IN_PILOTA: ${{ github.event.inputs.pilota }}
           IN_CICLO: ${{ github.event.inputs.ciclo }}
           IN_ORE: ${{ github.event.inputs.ore }}
           IN_SEG: ${{ github.event.inputs.ore_segmento }}
         run: |
           pip install -q requests
-          ORE=${IN_ORE:-48}; SEG=${IN_SEG:-16}
+          PILOTA=${IN_PILOTA:-ecmwf}; ORE=${IN_ORE:-48}; SEG=${IN_SEG:-16}
           case "$ORE$SEG" in *[!0-9]*) echo "ore e ore_segmento devono essere numeri"; exit 1;; esac
           if [ $((ORE % 3)) -ne 0 ] || [ "$ORE" -lt 3 ] || [ "$ORE" -gt 48 ]; then echo "ore: multiplo di 3 tra 3 e 48"; exit 1; fi
           if [ "$SEG" -lt 1 ] || [ $(( (ORE + SEG - 1) / SEG )) -gt 4 ]; then echo "servono al massimo 4 segmenti: alza ore_segmento"; exit 1; fi
           CICLO=${IN_CICLO}
-          if [ -z "$CICLO" ]; then CICLO=$(python3 wrf/scarica_gfs.py --ore "$ORE" --solo-ciclo); fi
-          { echo "ciclo=$CICLO"; echo "ore=$ORE"; echo "seg=$SEG"; } >> "$GITHUB_OUTPUT"
-          echo "Ciclo $CICLO, $ORE ore, segmenti da $SEG ore"
+          if [ -z "$CICLO" ]; then CICLO=$(python3 "wrf/scarica_$PILOTA.py" --ore "$ORE" --solo-ciclo); fi
+          { echo "ciclo=$CICLO"; echo "pilota=$PILOTA"; echo "ore=$ORE"; echo "seg=$SEG"; } >> "$GITHUB_OUTPUT"
+          echo "Pilota $PILOTA, ciclo $CICLO, $ORE ore, segmenti da $SEG ore"
 
   # 4) La previsione, a segmenti in fila (un job non può durare più di 6 ore)
   previsione:
@@ -138,6 +145,7 @@ jobs:
           - { seg: 3, prev: 2 }
     env:
       CICLO: ${{ needs.pianifica.outputs.ciclo }}
+      PILOTA: ${{ needs.pianifica.outputs.pilota }}
       ORE: ${{ needs.pianifica.outputs.ore }}
       SEG: ${{ needs.pianifica.outputs.seg }}
     steps:
@@ -168,8 +176,9 @@ jobs:
         if: steps.s.outputs.attivo == 'true'
         run: |
           bash wrf/dipendenze.sh
-          pip install -q requests netCDF4 numpy
-      - name: GFS, ungrib, metgrid, real (solo primo segmento)
+          pip install -q requests netCDF4 numpy eccodes
+          python3 -c "import eccodes; print('ecCodes', eccodes.codes_get_api_version())"
+      - name: Dati globali, ungrib, metgrid, real (solo primo segmento)
         if: steps.s.outputs.attivo == 'true' && matrix.seg == 0
         run: bash wrf/esegui.sh prepara "$CICLO" "$ORE"
       - name: Stato del segmento precedente
@@ -232,7 +241,8 @@ jobs:
         env:
           WU_API_KEY: ${{ secrets.WU_API_KEY }}
           CICLO: ${{ needs.pianifica.outputs.ciclo }}
-        run: python3 wrf/postprocess.py --uscite uscite --out mappe --ciclo "$CICLO"
+          PILOTA: ${{ needs.pianifica.outputs.pilota }}
+        run: python3 wrf/postprocess.py --uscite uscite --out mappe --ciclo "$CICLO" --pilota "$PILOTA"
       - uses: actions/upload-artifact@v4
         with:
           name: mappe
@@ -242,4 +252,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CICLO: ${{ needs.pianifica.outputs.ciclo }}
+          PILOTA: ${{ needs.pianifica.outputs.pilota }}
         run: bash wrf/pubblica.sh mappe "$CICLO"

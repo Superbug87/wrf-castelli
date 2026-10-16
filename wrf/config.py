@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Genera i namelist di WPS e WRF per i tre domini annidati (vedi dominio.py).
 
-  config.py wps   --ciclo 2026101600 --ore 48 [--geog PERCORSO]   > namelist.wps
+  config.py wps   --ciclo 2026101600 --ore 48 [--pilota ecmwf|gfs] [--geog PERCORSO]   > namelist.wps
   config.py input --ciclo 2026101600 --da 0 --a 16 [--nlev 34 --nsoil 4] > namelist.input
   config.py metgrid-info met_em.d01.*.nc          stampa "livelli_metgrid livelli_suolo"
 
@@ -30,7 +30,7 @@ def _tre(valore, fmt="{}"):
     return ", ".join(fmt.format(valore) for _ in range(3))
 
 
-def namelist_wps(inizio, fine, geog):
+def namelist_wps(inizio, fine, geog, prefisso):
     starts = D.parent_starts()
     return f"""&share
  wrf_core = 'ARW',
@@ -62,11 +62,11 @@ def namelist_wps(inizio, fine, geog):
 
 &ungrib
  out_format = 'WPS',
- prefix = 'GFS',
+ prefix = '{prefisso}',
 /
 
 &metgrid
- fg_name = 'GFS',
+ fg_name = '{prefisso}',
  io_form_metgrid = 2,
 /
 """
@@ -159,6 +159,8 @@ def main():
     w.add_argument("--ciclo", default="2026010100")
     w.add_argument("--ore", type=int, default=24)
     w.add_argument("--geog", default="/percorso/WPS_GEOG")
+    w.add_argument("--pilota", choices=["ecmwf", "gfs"], default="ecmwf",
+                   help="modello globale da cui WRF prende condizioni iniziali e al contorno")
     i = sub.add_parser("input")
     i.add_argument("--ciclo", required=True)
     i.add_argument("--da", type=int, default=0)
@@ -172,7 +174,7 @@ def main():
     D.verifica()
     if a.cmd == "wps":
         c = _ciclo(a.ciclo)
-        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog))
+        sys.stdout.write(namelist_wps(c, c + timedelta(hours=a.ore), a.geog, a.pilota.upper()))
     elif a.cmd == "input":
         c = _ciclo(a.ciclo)
         if a.a <= a.da:

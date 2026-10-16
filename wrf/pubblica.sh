@@ -13,7 +13,7 @@ rm -rf ultimo; mkdir -p ultimo "archivio/$CICLO"
 cp "$IMG"/*.png ultimo/
 cp "$IMG"/*.png "archivio/$CICLO/"
 {
-  echo "# Ultima previsione WRF — ciclo GFS ${CICLO:0:8} ${CICLO:8:2}Z"
+  PIL=${PILOTA:-ecmwf}; echo "# Ultima previsione WRF — ciclo ${PIL^^} ${CICLO:0:8} ${CICLO:8:2}Z"
   echo
   for f in ultimo/*.png; do echo "![$(basename "$f" .png)]($f)"; echo; done
 } > README.md

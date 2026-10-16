@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Uso:
-#   esegui.sh prepara CICLO ORE_TOTALI        scarica GFS, ungrib, metgrid, real.exe
+#   esegui.sh prepara CICLO ORE_TOTALI        scarica i dati globali, ungrib, metgrid, real.exe
+#                                             (PILOTA=ecmwf, il default, oppure PILOTA=gfs)
 #   esegui.sh modello CICLO DA_ORA A_ORA      wrf.exe da DA_ORA ad A_ORA (ore dall'inizio del ciclo);
 #                                             DA_ORA > 0 riprende dal restart dell'ultimo segmento
 set -euo pipefail
@@ -9,6 +10,9 @@ INSTALL=${INSTALL:-$HOME/wrf-install}
 GEO=${GEO:-$HOME/wrf-geo}
 LAVORO=${LAVORO:-$HOME/lavoro}
 export OMP_NUM_THREADS=1
+PILOTA=${PILOTA:-ecmwf}
+case "$PILOTA" in ecmwf|gfs) ;; *) echo "PILOTA deve essere ecmwf o gfs"; exit 2;; esac
+PREFISSO=$(echo "$PILOTA" | tr a-z A-Z)          # prefisso dei file intermedi di WPS: ECMWF o GFS
 cmd=${1:?comando}; CICLO=${2:?ciclo}
 
 cartella_run() {
@@ -30,23 +34,24 @@ esito_wrf() {  # $1 = file rsl da controllare
 case "$cmd" in
 prepara)
   ORE=${3:?ore totali}
-  mkdir -p "$LAVORO/WPS" "$LAVORO/gfs"
+  mkdir -p "$LAVORO/WPS" "$LAVORO/dati"
   cd "$LAVORO"
-  echo "== GFS $CICLO, ore 0-$ORE"
-  python3 "$QUI/scarica_gfs.py" --ciclo "$CICLO" --ore "$ORE" --out gfs
-  df -h / | tail -n1
+  echo "== $PREFISSO $CICLO, ore 0-$ORE"
+  python3 "$QUI/scarica_$PILOTA.py" --ciclo "$CICLO" --ore "$ORE" --out dati
+  du -sh dati; df -h / | tail -n1
 
   echo "== WPS: ungrib e metgrid"
   cp -aL "$INSTALL/WPS/." WPS/
   cp "$GEO"/geo_em.d0*.nc WPS/
   cd WPS
-  python3 "$QUI/config.py" wps --ciclo "$CICLO" --ore "$ORE" > namelist.wps
-  ./link_grib.csh ../gfs/gfs.t*
-  ln -sf ungrib/Variable_Tables/Vtable.GFS Vtable
+  python3 "$QUI/config.py" wps --ciclo "$CICLO" --ore "$ORE" --pilota "$PILOTA" > namelist.wps
+  ./link_grib.csh ../dati/*
+  if [ "$PILOTA" = ecmwf ]; then ln -sf "$QUI/Vtable.ECMWF_OD" Vtable; else ln -sf ungrib/Variable_Tables/Vtable.GFS Vtable; fi
   ./ungrib.exe > ungrib.log 2>&1 || { tail -n 40 ungrib.log; exit 1; }
-  rm -rf ../gfs GRIBFILE.*
+  ls "$PREFISSO":* | head -n 3
+  rm -rf ../dati GRIBFILE.*
   ./metgrid.exe > metgrid.log 2>&1 || { tail -n 40 metgrid.log; exit 1; }
-  rm -f GFS:*
+  rm -f "$PREFISSO":*
   ls met_em.d0* | head -n 3
   read -r NLEV NSOIL < <(python3 "$QUI/config.py" metgrid-info "$(ls met_em.d01.* | head -n1)")
   echo "livelli metgrid: $NLEV, livelli suolo: $NSOIL"
