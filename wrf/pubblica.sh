@@ -12,6 +12,7 @@ if git fetch -q --depth 1 origin risultati 2>/dev/null; then git checkout -q -b 
 rm -rf ultimo; mkdir -p ultimo "archivio/$CICLO"
 cp "$IMG"/*.png ultimo/
 cp "$IMG"/*.png "archivio/$CICLO/"
+cp "$IMG"/*.csv "archivio/$CICLO/" 2>/dev/null || true       # statistiche del confronto con il radar, solo nell'archivio
 {
   PIL=${PILOTA:-ecmwf}; echo "# Ultima previsione WRF — ciclo ${PIL^^} ${CICLO:0:8} ${CICLO:8:2}Z"
   echo
@@ -19,6 +20,10 @@ cp "$IMG"/*.png "archivio/$CICLO/"
   if [ "${PIL}" = "gfs" ]; then FONTE="NOAA/NCEP GFS"; else FONTE="ECMWF IFS open data (CC BY 4.0, dati modificati)"; fi
   echo ">"
   echo "> Dati di partenza: ${FONTE}. Modello: WRF (NCAR). Temperatura del mare: MUR SST (NASA JPL), quando disponibile. Stazioni: Weather Underground, usate solo dentro il modello e non ripubblicate. Fonti e licenze: [README del progetto](https://github.com/${GITHUB_REPOSITORY:-utente/repo}#fonti-dei-dati-e-licenze)."
+  if ls ultimo/radar_*.png >/dev/null 2>&1; then
+    echo ">"
+    echo "> Le immagini «radar_*» contengono dati Radar-DPC, Dipartimento della Protezione Civile (radar.protezionecivile.it), licenza [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/): le immagini ricavate da quei dati hanno la stessa licenza."
+  fi
   echo
   for f in ultimo/*.png; do echo "![$(basename "$f" .png)]($f)"; echo; done
 } > README.md

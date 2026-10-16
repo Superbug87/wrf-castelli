@@ -30,6 +30,10 @@ on:
         description: "Temperatura del mare ad alta risoluzione (MUR SST, 1 km) al posto di quella del modello globale"
         type: boolean
         default: true
+      radar:
+        description: "Confronto con il radar della Protezione Civile e pioggia delle prossime 3 ore (due immagini in più)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write                 # serve a pubblicare le immagini nel ramo "risultati"
@@ -256,10 +260,24 @@ jobs:
           CICLO: ${{ needs.pianifica.outputs.ciclo }}
           PILOTA: ${{ needs.pianifica.outputs.pilota }}
         run: python3 wrf/postprocess.py --uscite uscite --out mappe --ciclo "$CICLO" --pilota "$PILOTA"
+      # Il radar e' un in piu': se non risponde o qualcosa va storto, le mappe di WRF escono lo stesso
+      - name: Librerie per il radar
+        if: ${{ github.event.inputs.radar != 'false' }}
+        continue-on-error: true
+        run: pip install -q pyproj opencv-python-headless tifffile imagecodecs
+      - name: Radar (verifica sulle ultime ore e pioggia delle prossime 3)
+        if: ${{ github.event.inputs.radar != 'false' }}
+        continue-on-error: true
+        env:
+          CICLO: ${{ needs.pianifica.outputs.ciclo }}
+          PILOTA: ${{ needs.pianifica.outputs.pilota }}
+        run: python3 wrf/pioggia_radar.py --uscite uscite --out mappe --ciclo "$CICLO" --pilota "$PILOTA"
       - uses: actions/upload-artifact@v4
         with:
           name: mappe
-          path: mappe/*.png
+          path: |
+            mappe/*.png
+            mappe/*.csv
           retention-days: 14
       - name: Pubblico nel ramo risultati
         env:

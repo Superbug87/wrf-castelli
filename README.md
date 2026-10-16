@@ -28,7 +28,7 @@ una ogni 6 ore, e le pubblica nel ramo `risultati`.
 1. App GitHub (o sito) → il repository → **Actions** → **Previsione WRF Castelli Romani** → **Run workflow**.
 2. Campi: `pilota` (`ecmwf` di default, oppure `gfs`), `ciclo` (vuoto = l'ultimo completo; per ECMWF solo le 00 e le 12 UTC),
    `ore` (default 48), `ore_segmento` (default 16), `stazioni` (nudging, sì di default), `mare` (temperatura del mare
-   MUR a 1 km, sì di default).
+   MUR a 1 km, sì di default), `radar` (confronto con il radar e pioggia delle prossime 3 ore, sì di default).
 3. Dopo la prima esecuzione riuscita si può attivare l'avvio automatico (riga `schedule` nel workflow): con ECMWF
    alle 08:40 UTC, quando il ciclo delle 00 UTC è pubblicato (verso le 07:35).
 
@@ -68,6 +68,21 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
   (circa 1 km, con 1-2 giorni di ritardo, tenuta costante per le 48 ore) e WRF la usa sui punti d'acqua al posto di quella del
   modello globale. I Castelli sono a circa 30 km dalla costa: il guadagno riguarda soprattutto la fascia costiera e le brezze.
   Se il servizio non risponde, WRF gira lo stesso con la temperatura del mare del modello globale.
+- **Radar (Protezione Civile).** Due immagini in più, `radar_1_verifica` e `radar_2_prossime_3_ore`, e un CSV nell'archivio.
+  *Verifica*: per le ultime ore (fino a 6) la pioggia oraria misurata dal radar nazionale (prodotto SRI, mosaico a 1 km
+  ogni 5 minuti) accanto a quella di WRF, con la media sull'area, la quota di area bagnata e un indice di accordo di
+  posizione (FSS, soglia 0,5 mm in un'ora, controllato su 10 km). *Prossime 3 ore*: il radar spostato lungo il movimento che
+  ha adesso, WRF per le stesse ore, e un mix dei due in cui il peso del radar scende da 83% (prima ora) a 17% (terza).
+  I pesi sono una scelta di buon senso, **non tarati**. Se il radar non risponde lo script esce e le mappe di WRF non cambiano.
+  Cosa dicono i collaudi (radar vero, ultimi 4 giorni, 76 casi su riquadri di 300 km in tutta Italia, confronto con
+  «la pioggia resta dov'è»): spostare la pioggia **non migliora in media** l'accordo di posizione (differenza tra
+  −0,02 e +0,02, indistinguibile da zero). Se però il movimento stimato è rapido (oltre circa 24 km/h) si guadagna
+  poco (circa +0,04 su una base di circa 0,25), mentre con movimenti lenti spostare peggiora (circa −0,03). Per questo sotto quella
+  velocità la pioggia è lasciata ferma. Un singolo episodio di pioggia organizzata (12 ottobre sul Lazio) andava molto
+  meglio (accordo a un'ora 0,68 contro 0,43), ma è un caso favorevole, non la regola. Il radar non prevede la nascita dei
+  temporali: dopo 1-2 ore conta soprattutto WRF. Il radar stesso può sbagliare (echi dei monti, schermature, calibrazione).
+  Nella zona dei Castelli negli ultimi 4 giorni non è piovuto, quindi la verifica contro WRF vero non è ancora stata vista.
+  Il CSV (`archivio/<ciclo>/radar_verifica.csv`) serve a vedere nel tempo se WRF migliora e a tarare i pesi.
 - **Raffiche = stima**: massimo orario del vento a 10 m (diagnostica di WRF) × 1,4.
 - **CAPE = stima** da parcella di superficie. Controllata contro MetPy su 5 profili: scarti sotto l'1%.
 - ECMWF (come GFS) ha punti ogni 25 km: l'1 km viene da WRF e dall'orografia, non dal dato di partenza.
@@ -83,12 +98,13 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
 | Dati di partenza e al contorno (default) | [ECMWF IFS open data](https://www.ecmwf.int/en/forecasts/datasets/open-data), 0,25°, [doi:10.21957/open-data](https://doi.org/10.21957/open-data) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) e condizioni d'uso ECMWF. **Dati modificati**: ritagliati sull'Italia, ricodificati e usati come condizioni iniziali e al contorno di WRF. ECMWF non garantisce i dati e non risponde di errori o omissioni |
 | Dati di partenza alternativi | [GFS di NOAA/NCEP](https://www.nco.ncep.noaa.gov/pmb/products/gfs/) | dati pubblici del governo statunitense; NOAA non approva questo lavoro |
 | Temperatura del mare (facoltativa) | [MUR SST](https://podaac.jpl.nasa.gov/dataset/MUR-JPL-L4-GLOB-v4.1) di NASA JPL (0,01°, circa 1 km), via [NOAA CoastWatch ERDDAP](https://coastwatch.pfeg.noaa.gov/erddap/), citazione: JPL MUR MEaSUREs Project, 2015, [doi:10.5067/GHGMR-4FJ04](https://doi.org/10.5067/GHGMR-4FJ04) | dati NASA ad accesso libero, si chiede di citare la fonte |
+| Radar (facoltativo) | [Radar-DPC](https://radar.protezionecivile.it), Dipartimento della Protezione Civile, mosaico nazionale SRI (intensità di pioggia) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/): va citata la fonte e le immagini ricavate (`radar_*`) hanno la stessa licenza. Dati usati solo per le due immagini radar, non ripubblicati in forma grezza; il CSV contiene solo medie sull'area |
 | Modello | [WRF e WPS](https://www2.mmm.ucar.edu/wrf/users/public.html) di NCAR/UCAR | software pubblico, non incluso qui: lo compila il flusso di lavoro dai sorgenti ufficiali |
 | Terreno e uso del suolo | dati geografici [WPS_GEOG](https://www2.mmm.ucar.edu/wrf/users/download/get_sources_wps_geog.html) di NCAR/UCAR (tra cui GMTED2010 di USGS/NGA e MODIS) | scaricati durante il calcolo, non inclusi qui; vale la licenza di ciascun dato |
 | Stazioni meteo | rete di stazioni amatoriali di [Weather Underground](https://www.wunderground.com/) (The Weather Company), tramite la chiave personale del proprietario | restano soggette ai termini d'uso di Weather Underground, da rispettare (la chiave è personale). I dati **non vengono ripubblicati**: si scaricano durante il calcolo, entrano in WRF e non finiscono nei risultati; i file temporanei che passano da un segmento all'altro sono cifrati; i log non riportano codici o posizioni delle stazioni; le mappe mostrano solo l'uscita del modello |
 | Solo per `previsioni_castelli.py` usato da solo | [Open-Meteo](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); l'API gratuita è per uso non commerciale) e quote dal modello digitale del terreno Copernicus DEM («contiene dati Copernicus modificati») | non usati dalla catena WRF |
 
-Librerie principali: ecCodes (Apache 2.0), JasPer, NumPy, SciPy, Matplotlib, netCDF4, requests: ciascuna con la sua licenza.
+Librerie principali: ecCodes (Apache 2.0), JasPer, NumPy, SciPy, Matplotlib, netCDF4, requests, pyproj, OpenCV, tifffile: ciascuna con la sua licenza.
 I nomi dei paesi e le posizioni sulle mappe sono scritti a mano nello script, non vengono da OpenStreetMap o altri archivi.
 Le condizioni dei fornitori possono cambiare: prima di usare il progetto in modo diverso da quello personale
 (per esempio per un servizio pubblico o commerciale) vanno ricontrollate.
@@ -100,6 +116,8 @@ namelist (letti da f90nml, domini annidati verificati), scelta del ciclo e scari
 e neve compresi),
 file delle stazioni (inventate) riletto con le stesse istruzioni di lettura di WRF,
 file `SST` riletto con `rd_intermediate` di WPS,
+radar vero (scarico, posizione sulla mappa, movimento su casi inventati e su pioggia vera) e le due immagini a partire da
+`wrfout` inventati; il confronto con WRF vero non è stato visto,
 CAPE contro MetPy, mappe a partire da file `wrfout` inventati con la stessa struttura di WRF, pubblicazione
 nel ramo `risultati`, sintassi del workflow (actionlint) e degli script (shellcheck).
 
@@ -115,5 +133,7 @@ Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifac
 - `wrf/postprocess.py` — da `wrfout` alle mappe
 - `wrf/stazioni_wrf.py` — stazioni Wunderground nel formato di WRF per il nudging
 - `wrf/scarica_sst.py` — temperatura del mare MUR nel formato intermedio di WPS (campo `SST`)
+- `wrf/radar.py` — scarico del radar Radar-DPC, posizione sulla mappa, movimento · `wrf/pioggia_radar.py` — verifica e
+  pioggia delle prossime 3 ore
 - `wrf/prova_sintetica.py` — file `wrfout` inventati per collaudare le mappe senza WRF
 - `previsioni_castelli.py` — mappe e correzione con le stazioni (usato da `postprocess.py`)
