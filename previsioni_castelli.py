@@ -507,12 +507,29 @@ ANCORE = {
 }
 # colori per fasce con livelli fissi (l'ultimo è per i valori oltre l'ultimo livello)
 FASCE = {
-    "pioggia": ["#c6e6f5", "#8dcdf0", "#4aa3e6", "#2a6fd0", "#27b76a", "#f2dc3a", "#f08a2e", "#d3302b"],
+    "pioggia": ["#d2ecf8", "#9bd3f2", "#58aeea", "#2f7fda", "#2a4fc0", "#22a9a0", "#37b95a", "#9fd33f", "#f2e03a",
+                "#f6b333", "#f0752c", "#d93a2d", "#b0238c", "#701c9e"],
     "cape": ["#d4eccb", "#97d98f", "#54c05f", "#e4df3a", "#f5a73b", "#e2452e", "#b3226f", "#5c1a8c"],
 }
 # pressione: la variazione sul dominio è di pochi hPa, quindi la scala segue i valori del giorno
 ARCOBALENO = ["#4b3a9e", "#3a73c9", "#3fb0c7", "#5fc47f", "#c3dc58", "#f5d83f", "#f29a33", "#d9432f"]
 PASSI = (1, 2, 3, 5, 10, 15, 20, 25, 50)
+LIVELLI_PIOGGIA_1H = [0.1, 0.2, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32]
+
+
+def colori_fasce(nome, n):
+    """n colori per le fasce (l'ultimo è per i valori oltre l'ultimo livello), campionati dalla tavolozza."""
+    base = FASCE[nome]
+    if len(base) == n:
+        return list(base)
+    cmap = LinearSegmentedColormap.from_list("fasce", base)
+    return [cmap(x) for x in np.linspace(0, 1, n)]
+
+
+def tick_utili(liv, massimo=10):
+    """Non più di `massimo` etichette sulla barra dei colori."""
+    passo = -(-len(liv) // massimo)
+    return list(liv)[::passo]
 
 
 def scala_assoluta(nome, valori, passo, massimo=None, max_fasce=12, min_fasce=4):
@@ -598,12 +615,12 @@ def disegna_mappe(c, z_f, lat_f, lon_f, k, tempi, titolo_banner, modello_txt, ou
     st = lambda a: float(a[iy, ix])                          # valore alla stazione
 
     def p_temp(ax):
-        liv, cols = scala_assoluta("temp", T, 1)
+        liv, cols = scala_assoluta("temp", T, 1, max_fasce=24)
         cs = ax.contourf(LON, LAT, T, levels=liv, colors=cols, zorder=1)
-        return cs, liv[::2] if len(liv) > 9 else liv
+        return cs, tick_utili(liv)
 
     def p_vento(ax):
-        liv, cols = scala_assoluta("vento", vel, 5)
+        liv, cols = scala_assoluta("vento", vel, 2, max_fasce=20)
         cs = ax.contourf(LON, LAT, vel, levels=liv, colors=cols, zorder=1)
         s = max(1, len(lon_f) // 10)
         rif = 10 if vel.max() < 20 else 20                 # lunghezza della freccia di riferimento
@@ -611,7 +628,7 @@ def disegna_mappe(c, z_f, lat_f, lon_f, k, tempi, titolo_banner, modello_txt, ou
                       scale=220 * rif / 20, scale_units="width", width=0.006, zorder=6)
         ax.quiverkey(q, 0.70, 0.07, rif, f"{rif} km/h", labelpos="E", coordinates="axes",
                      fontproperties={"size": 10}, labelcolor=INK)
-        return cs, liv[::2] if len(liv) > 9 else liv
+        return cs, tick_utili(liv)
 
     def p_press(ax):
         lv, cols = scala_arcobaleno(p)
@@ -628,8 +645,8 @@ def disegna_mappe(c, z_f, lat_f, lon_f, k, tempi, titolo_banner, modello_txt, ou
             ax.text(0.62, 0.12, "Nessuna pioggia\nprevista a quest'ora", ha="center", va="center",
                     transform=ax.transAxes, fontsize=14, color=SEC)
             return None, None
-        liv = [0.1, 0.5, 1, 2, 4, 8, 16, 32]
-        cols = FASCE["pioggia"]
+        liv = LIVELLI_PIOGGIA_1H
+        cols = colori_fasce("pioggia", len(liv))
         cs = ax.contourf(LON, LAT, P, levels=liv, colors=list(cols[:-1]), extend="max", zorder=1)
         cs.cmap.set_over(cols[-1])
         cs.changed()
@@ -749,20 +766,20 @@ def definisci_fogli(c):
     G = c.get("G")
     return [
         dict(nome="temperatura_2m", titolo="Temperatura a 2 m", unita="°C", dati=c["T"], scala="temp",
-             fmt="{:.0f}", passo=1),
+             fmt="{:.0f}", passo=1, max_fasce=24),
         dict(nome="temperatura_850", titolo="Temperatura a 850 hPa", unita="°C", dati=c.get("T850"),
-             scala="temp", fmt="{:.0f}", passo=1, nota="circa 1500 m di quota"),
+             scala="temp", fmt="{:.0f}", passo=1, max_fasce=24, nota="circa 1500 m di quota"),
         dict(nome="vento_medio", titolo="Vento medio a 10 m", unita="km/h", dati=np.hypot(c["u"], c["v"]) * kmh,
-             scala="vento", fmt="{:.0f}", passo=5, frecce=(c["u"] * kmh, c["v"] * kmh),
+             scala="vento", fmt="{:.0f}", passo=2, max_fasce=20, frecce=(c["u"] * kmh, c["v"] * kmh),
              nota="frecce: verso dove soffia"),
         dict(nome="raffiche", titolo="Raffiche a 10 m", unita="km/h", dati=None if G is None else G * kmh,
-             scala="vento", fmt="{:.0f}", passo=5),
+             scala="vento", fmt="{:.0f}", passo=2, max_fasce=20),
         dict(nome="pioggia_1h", titolo="Pioggia nell'ultima ora", unita="mm", dati=c["P"], scala="pioggia",
-             fmt="{:.1f}", livelli=[0.1, 0.5, 1, 2, 4, 8, 16, 32]),
+             fmt="{:.1f}", livelli=LIVELLI_PIOGGIA_1H),
         dict(nome="pioggia_3h", titolo="Pioggia nelle ultime 3 ore", unita="mm", dati=c["P3"], scala="pioggia",
-             fmt="{:.1f}", livelli=[0.2, 1, 2, 5, 10, 20, 40, 80]),
+             fmt="{:.1f}", livelli=[0.2, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 60, 80]),
         dict(nome="pioggia_6h", titolo="Pioggia nelle ultime 6 ore", unita="mm", dati=c["P6"], scala="pioggia",
-             fmt="{:.1f}", livelli=[0.5, 2, 5, 10, 20, 40, 80, 160]),
+             fmt="{:.1f}", livelli=[0.5, 1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128]),
         dict(nome="pressione", titolo="Pressione al livello del mare", unita="hPa", dati=c["p"], scala="arcobaleno",
              fmt="{:.0f}", span=4),
         dict(nome="umidita", titolo="Umidità relativa", unita="%", dati=c["RH"], scala="umid", fmt="{:.0f}",
@@ -832,12 +849,14 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
         dati = np.asarray(f["dati"], float)
         sel = dati[idx]
         if "livelli" in f:                               # fasce a livelli fissi (pioggia, CAPE)
-            liv, cols, fisse = list(f["livelli"]), list(FASCE[f["scala"]]), True
+            liv, fisse = list(f["livelli"]), True
+            cols = colori_fasce(f["scala"], len(liv))
         elif f["scala"] == "arcobaleno":                 # segue i valori del giorno (pressione)
             liv, cols = scala_arcobaleno(sel, n=8, span_min=f.get("span", 1.5))
             fisse = False
         else:                                            # un colore per valore, uguale ogni giorno
-            liv, cols = scala_assoluta(f["scala"], sel, f["passo"], massimo=f.get("massimo"))
+            liv, cols = scala_assoluta(f["scala"], sel, f["passo"], massimo=f.get("massimo"),
+                                       max_fasce=f.get("max_fasce", 12))
             fisse = False
 
         def riempi(ax, campo):
@@ -896,8 +915,10 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
         y_cb = HEAD + righe_tile * PASSO + 0.35
         cax = fig.add_axes([(W - 5.0) / 2 / W, 1 - (y_cb + 0.17) / H, 5.0 / W, 0.17 / H])
         cb = fig.colorbar(cs, cax=cax, orientation="horizontal")
-        cb.set_ticks(liv if len(liv) <= 9 else liv[::2])
-        cb.ax.tick_params(labelsize=11, colors=SEC, length=3)
+        tk = tick_utili(liv, 14 if fisse else 10)
+        cb.set_ticks(tk)
+        cb.set_ticklabels([f"{t:g}" for t in tk])
+        cb.ax.tick_params(labelsize=10 if len(tk) > 10 else 11, colors=SEC, length=3)
         cb.outline.set_visible(False)
 
         fig.text(MARG / W, 1 - (HEAD + righe_tile * PASSO + CB + 0.05) / H, testo, fontsize=9.5, color=SEC,
