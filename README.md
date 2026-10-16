@@ -138,10 +138,20 @@ cache di WRF). Si può lanciare anche a mano: `bash wrf/prove.sh` (con `PROVA_RA
 **Non provato:** compilazione di WRF e WPS sul server di GitHub, download dei dati geografici NCAR, geogrid, metgrid,
 real.exe, wrf.exe.
 Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifact.
-Un primo tentativo di compilazione (16 ottobre 2026) è rimasto oltre 4 ore nello step di compilazione, contro le 40-90
-minuti attese, ed è stato annullato: il log di un job in corso non si può leggere, quindi la causa non è nota. Da qui la
-compilazione a tappe con avanzamento e guardiano. Le funzioni di avanzamento, tempo massimo e guardiano sono provate con
-comandi inventati (`wrf/prova_costruzione.sh`); la compilazione vera su GitHub non ancora.
+Cronaca della prima compilazione su GitHub (16 ottobre 2026):
+1. *Primo run:* fermo per oltre 4 ore, annullato. Causa **quasi certa**: il rilevamento dell'opzione lanciava `./configure < /dev/null | … | head -n1`;
+   senza risposte il configure di WRF riscrive il menu all'infinito (verificato in locale). In locale il SIGPIPE lo ferma, su GitHub no:
+   il log mostrava i `Broken pipe` della catena e, all'annullamento, i processi `configure` e `perl` ancora vivi (che il SIGPIPE sia
+   ignorato dal server è dedotto, non misurato). Ora quella chiamata ha un limite di 60 secondi e il run successivo ha superato il punto.
+2. *Secondo run:* tutti gli oggetti compilati in circa 30 minuti, nessun errore di compilazione, ma il collegamento di `wrf.exe` e `real.exe`
+   è fallito con `undefined reference` (a `module_optional_input`, `solve_interface`, …), pur con quei moduli compilati e archiviati. Ogni
+   collegamento durava 18 minuti con 7 GB di memoria. Il `mpif90` di Ubuntu aggiunge da solo `-flto=auto`. Correzione: `-fno-lto` su `DM_FC` e `DM_CC`
+   (`disattiva_lto`); gli oggetti già compilati si riusano dalla cache parziale. È una **ipotesi forte, non ancora provata**: in un caso piccolo
+   il problema non si riproduce. Se il collegamento fallisce ancora, `diagnosi.txt` contiene il contenuto dell'archivio.
+
+Le funzioni di avanzamento, tempo massimo, guardiano e `-fno-lto` sono provate con comandi e file inventati (`wrf/prova_costruzione.sh`).
+La chiave della cache parziale (`wrf-src-v1-…`) non dipende dagli script: una correzione a `costruisci.sh` non butta via gli oggetti compilati
+(per ripartire da zero basta cambiare `v1` nel flusso di lavoro). La cache finale (`wrf-build-…`) invece dipende dagli script.
 
 ## File
 - `.github/workflows/wrf.yml` — il flusso automatico

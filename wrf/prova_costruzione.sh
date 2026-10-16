@@ -54,6 +54,31 @@ rc=0
 [ "$rc" = 1 ] || guasto "passo_guardato: uscita $rc invece di 1"
 grep -q 'errore finto' "$T/pg_ko.txt" || guasto "passo_guardato non mostra il log del passo fallito"
 
+echo "-- disattiva_lto: aggiunge -fno-lto a DM_FC e DM_CC (righe come quelle vere di configure.wrf), una volta sola"
+cat > "$T/configure.wrf" <<'EOF'
+SFC             =       gfortran
+SCC             =       gcc
+DM_FC           =       mpif90
+DM_CC           =       mpicc -cc=$(SCC)
+FC              =        $(DM_FC)
+CC              =       $(DM_CC) -DFSEEKO64_OK
+EOF
+disattiva_lto "$T/configure.wrf"
+cp "$T/configure.wrf" "$T/configure.wrf.1"
+disattiva_lto "$T/configure.wrf"
+cmp -s "$T/configure.wrf" "$T/configure.wrf.1" || guasto "disattiva_lto non è idempotente"
+grep -q '^DM_FC *= *mpif90 -fno-lto' "$T/configure.wrf" || guasto "manca -fno-lto in DM_FC"
+grep -q '^DM_CC *= *mpicc -fno-lto -cc=' "$T/configure.wrf" || guasto "manca -fno-lto in DM_CC (e -cc deve restare)"
+[ "$(grep -c 'fno-lto' "$T/configure.wrf")" = 2 ] || guasto "-fno-lto compare dove non deve"
+printf 'SFC = gfortran\n' > "$T/senza_dm.wrf"
+rc=0
+( disattiva_lto "$T/senza_dm.wrf" ) > /dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || guasto "file senza DM_FC/DM_CC: uscita $rc invece di 1"
+if command -v mpif90 > /dev/null; then
+  echo "-- il wrapper mpif90 di questo sistema: -fno-lto viene dopo -flto e vince"
+  mpif90 -show -c -O2 -fno-lto x.f90 | tr ' ' '\n' | grep -n -E '^-f(no-)?lto' | tail -n 1 | grep -q 'fno-lto' || guasto "con questo mpif90 -fno-lto non è l'ultimo flag LTO"
+fi
+
 echo "-- clona: nessuna cartella a metà se il clone fallisce"
 cd "$T"
 ( clona finto "file://$T/non-esiste" main ) > /dev/null 2>&1 && guasto "il clone impossibile non ha dato errore"

@@ -69,9 +69,12 @@ jobs:
           path: |
             /home/runner/wrf-src
             /home/runner/jasper
-          key: wrf-src-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: wrf-src-v1-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # La chiave non dipende dagli script: una correzione a costruisci.sh non butta via gli oggetti già compilati.
+          # Se serve ripartire da zero basta cambiare "v1". La seconda riga recupera la cache del run 38909150275.
           restore-keys: |
-            wrf-src-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-${{ hashFiles('wrf/costruisci.sh', 'wrf/dipendenze.sh') }}-
+            wrf-src-v1-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-
+            wrf-src-${{ env.WRF_TAG }}-${{ env.WPS_TAG }}-35dc862da1d046e91121bc3425b1dfbdf690350c88851e720f45497de16c93b1-
       - name: Dipendenze di sistema
         if: steps.cache.outputs.cache-hit != 'true'
         run: bash wrf/dipendenze.sh

@@ -175,10 +175,42 @@ fase_prepara() {
   echo "preparazione finita"
 }
 
+# Il mpif90 e il mpicc di Ubuntu aggiungono da soli -flto=auto: collegare WRF così richiede 18 minuti e 7 GB per
+# eseguibile e finisce con "undefined reference" (visto il 16 ottobre 2026). Si spegne con -fno-lto, che nella riga di
+# comando viene dopo i flag del wrapper e vince. Va bene anche su oggetti già compilati con la LTO: sono "fat" e
+# contengono il codice normale. Si può rifare più volte senza danni.
+disattiva_lto() {   # disattiva_lto configure.wrf
+  grep -q 'fno-lto' "$1" || sed -i -E 's/^(DM_FC[[:space:]]*=[[:space:]]*mpif90)/\1 -fno-lto/; s/^(DM_CC[[:space:]]*=[[:space:]]*mpicc)/\1 -fno-lto/' "$1"
+  if [ "$(grep -c -E '^DM_(FC|CC)[[:space:]]*=.*-fno-lto' "$1")" != 2 ]; then
+    echo "$1: non riesco ad aggiungere -fno-lto a DM_FC e DM_CC"
+    grep -n -E '^(DM_FC|DM_CC)' "$1" || true
+    exit 1
+  fi
+}
+
+# Se il collegamento di wrf.exe o real.exe non riesce: cosa c'è davvero nell'archivio e quali flag LTO ha il wrapper
+diagnostica_collegamento() {
+  {
+    echo "== Diagnostica del collegamento"
+    echo "-- flag LTO del wrapper mpif90 e di configure.wrf"
+    mpif90 -show 2>&1 | tr ' ' '\n' | grep -i lto || true
+    grep -E '^(DM_FC|DM_CC)' configure.wrf || true
+    echo "-- membri di main/libwrflib.a: totale, e quelli che mancano al collegamento"
+    ar t main/libwrflib.a 2>&1 | wc -l
+    ar t main/libwrflib.a 2>&1 | grep -E 'module_optional_input|module_comm_nesting_dm|solve_interface|mediation_integrate' || echo "(nessuno dei quattro)"
+    echo "-- simbolo cercato dal collegamento, nell'archivio"
+    nm -A main/libwrflib.a 2>&1 | grep 'flag_st000010' | head -n 3 || echo "(non trovato)"
+    echo "-- primi errori di collegamento"
+    grep -n -m 5 'undefined reference' compile.log || true
+  } 2>&1 | tee -a "$SRC/diagnosi.txt"
+}
+
 fase_wrf() {
   ambiente
   cd "$SRC/WRF"
   if [ -s main/wrf.exe ] && [ -s main/real.exe ]; then echo "WRF già compilato"; return 0; fi
+  disattiva_lto configure.wrf
+  grep -E '^(DM_FC|DM_CC)' configure.wrf
   local comando=(./compile -j "$NPROC" em_real) t0=$SECONDS rc tentativo
   echo "== WRF: compile em_real con $NPROC processi (la prima volta 40-90 minuti; tempo massimo $(durata "$BUDGET_SEC"), avanzamento ogni $(durata "$PERIODO_SEC"))"
   # Due tentativi: con più processi in parallelo può capitare una gara tra file; la seconda passata di solito la supera
@@ -194,7 +226,9 @@ fase_wrf() {
     tail -n 40 compile.log
   done
   if [ ! -s main/wrf.exe ] || [ ! -s main/real.exe ]; then
-    echo "Compilazione di WRF fallita, ultime righe:"; tail -n 60 compile.log; exit 1
+    echo "Compilazione di WRF fallita, ultime righe:"; tail -n 60 compile.log
+    diagnostica_collegamento
+    exit 1
   fi
   echo "WRF compilato in $(durata $((SECONDS - t0)))"
 }
