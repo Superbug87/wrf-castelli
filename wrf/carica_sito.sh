@@ -25,6 +25,12 @@ for f in "$@"; do
     echo "::warning::Carico lo stesso con TLS ma senza verificare l'identita' del server (la password non viaggia in chiaro)."
     rc=0; carica "$f" --insecure || rc=$?
   fi
+  if [ "$rc" = 67 ]; then       # accesso negato: il controllo piu' comune e' uno spazio o un "a capo" copiato coi segreti
+    for v in FTP_HOST FTP_USER FTP_PASSWORD FTP_CARTELLA; do
+      if [[ "${!v}" =~ [[:space:]] ]]; then echo "::warning::$v contiene spazi o a-capo: rimetti il segreto senza."; fi
+    done
+    echo "::warning::Il server rifiuta utente o password (FTP_USER, FTP_PASSWORD). Per Altervista l'utente e' di solito il nome del sito."
+  fi
   if [ "$rc" != 0 ]; then
     echo "!! Caricamento di $(basename "$f") non riuscito (controlla host, utente, password e cartella)"; exit 1
   fi
