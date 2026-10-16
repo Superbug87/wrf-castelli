@@ -291,7 +291,10 @@ jobs:
           pattern: uscite-*
           path: uscite
       - name: Scompatto
-        run: for t in uscite/*/uscite.tgz; do tar -xzf "$t" -C "$(dirname "$t")"; done
+        # con download-artifact v7 e un solo allegato la sottocartella non c'e': si cerca ovunque
+        run: |
+          find uscite -name uscite.tgz | while read -r t; do tar -xzf "$t" -C "$(dirname "$t")"; done
+          find uscite -name 'wrfout_d03_*' | head -n 1 | grep -q . || { echo "nessun wrfout negli allegati"; find uscite | head -n 20; exit 1; }
       - name: Mappe (senza nudging sulle stazioni, correzione dopo il calcolo se c'è la chiave)
         env:
           WU_API_KEY: ${{ secrets.WU_API_KEY }}
