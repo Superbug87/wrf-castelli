@@ -1,0 +1,37 @@
+name: Carico le pagine sul sito
+
+on:
+  push:
+    branches: [main]
+    paths: ["sito/previsioni-wrf.html"]       # la pagina delle previsioni si ricarica da sola a ogni modifica
+  workflow_dispatch:
+    inputs:
+      anche_meteovelletri:
+        description: "Carica anche sito/meteovelletri.html (sovrascrive quella sul sito: solo se e' la versione giusta)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sito
+  cancel-in-progress: false
+
+jobs:
+  carica:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Carico via FTP
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_CARTELLA: ${{ secrets.FTP_CARTELLA }}
+          ANCHE_MV: ${{ github.event.inputs.anche_meteovelletri }}
+        run: |
+          FILE=(sito/previsioni-wrf.html)
+          if [ "$ANCHE_MV" = "true" ]; then FILE+=(sito/meteovelletri.html); fi
+          bash wrf/carica_sito.sh "${FILE[@]}"

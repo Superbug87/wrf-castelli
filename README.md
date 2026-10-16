@@ -65,6 +65,11 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
   orarie: scelta del tipo di mappa, cursore delle ore, tasto play, frecce, scorrimento col dito, salto al giorno.
   Va caricata sul sito (FTP) e legge le immagini direttamente da GitHub (`raw.githubusercontent.com`), che le tiene in
   cache circa 5 minuti: si aggiorna da sola quando esce un nuovo ciclo. Si può anche incorporare con un `<iframe>`.
+  `sito/meteovelletri.html` è la pagina di Meteo Velletri con la sezione «Previsioni WRF» (iframe sulla pagina sopra).
+  **Caricamento automatico (FTP)**: `.github/workflows/sito.yml` + `wrf/carica_sito.sh` caricano `previsioni-wrf.html`
+  a ogni modifica; `meteovelletri.html` solo avviando il flusso a mano con la casella «anche_meteovelletri». Servono
+  quattro segreti del repository (Settings → Secrets and variables → Actions): `FTP_HOST`, `FTP_USER`,
+  `FTP_PASSWORD`, `FTP_CARTELLA` (es. `5archi`). Senza segreti il flusso non fa nulla.
 - In *Actions → l'esecuzione → Artifacts*: `mappe` (le immagini) e, se qualcosa va storto, i log.
 
 ## Cosa fa e cosa non fa
