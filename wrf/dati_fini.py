@@ -227,7 +227,7 @@ def scrivi_tutto(out, dem, wc):
 # ---------------------------------------------------------------------------------------------
 # GEOGRID.TBL: aggiunge la risoluzione «fine» a quota e uso del suolo
 # ---------------------------------------------------------------------------------------------
-def ritocca_tabella(testo):
+def ritocca_tabella(testo, parti=("dem", "suolo")):
     """Aggiunge a HGT_M e LANDUSEF le righe `fine:` (rel_path, interp_option, landmask_water). Ritorna il testo nuovo."""
     blocchi = re.split(r"(?m)^(={5,}\s*)$", testo)
     out = []
@@ -235,17 +235,18 @@ def ritocca_tabella(testo):
     for b in blocchi:
         m = re.search(r"(?m)^\s*name\s*=\s*(\w+)", b)
         nome = m.group(1) if m else None
-        if nome == "HGT_M":
+        if nome == "HGT_M" and "dem" in parti:
             b = _inserisci(b, "interp_option", "        interp_option = fine:average_gcell(4.0)+four_pt+average_4pt")
             b = _inserisci(b, "rel_path", "        rel_path = fine:topo_cop30/")
             fatti.add(nome)
-        elif nome == "LANDUSEF":
+        elif nome == "LANDUSEF" and "suolo" in parti:
             b = _inserisci(b, "landmask_water", "        landmask_water = fine:17,21")
             b = _inserisci(b, "interp_option", "        interp_option = fine:average_gcell(0.0)")
             b = _inserisci(b, "rel_path", "        rel_path = fine:landuse_worldcover/")
             fatti.add(nome)
         out.append(b)
-    if fatti != {"HGT_M", "LANDUSEF"}:
+    attesi = ({"HGT_M"} if "dem" in parti else set()) | ({"LANDUSEF"} if "suolo" in parti else set())
+    if fatti != attesi:
         sys.exit(f"!! GEOGRID.TBL: non trovo i blocchi HGT_M e LANDUSEF (trovati: {sorted(fatti)})")
     return "".join(out)
 
@@ -325,6 +326,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", help="cartella dei dati geografici (WPS_GEOG)")
     ap.add_argument("--prova", action="store_true")
+    ap.add_argument("--parti", default="dem,suolo", help="quali dati fini usare: dem, suolo o dem,suolo")
     ap.add_argument("--tabella", help="GEOGRID.TBL da ritoccare (riscritta sul posto)")
     a = ap.parse_args()
     if a.prova:
@@ -332,22 +334,29 @@ def main():
         return
     if a.tabella:
         p = Path(a.tabella)
-        p.write_text(ritocca_tabella(p.read_text()))
+        p.write_text(ritocca_tabella(p.read_text(), a.parti.split(",")))
         print(f"{p}: aggiunte le righe `fine:`")
         if not a.out:
             return
     if not a.out:
         ap.error("serve --out")
-    print("Quota Copernicus 30 m...", flush=True)
-    dem = scarica_dem()
-    print(f"  quota: {dem.shape}, min {dem.min():.0f} max {dem.max():.0f} m", flush=True)
-    print("Uso del suolo WorldCover 10 m...", flush=True)
-    wc = scarica_suolo()
-    n1, n2, modis = scrivi_tutto(a.out, dem, wc)
-    classi = dict(zip(*np.unique(modis, return_counts=True)))
-    tot = modis.size
-    print(f"Scritti {n1} tasselli di quota e {n2} di suolo in {a.out}")
-    print("  suolo (classi MODIS): " + ", ".join(f"{int(k)}:{v / tot:.1%}" for k, v in classi.items()))
+    parti = a.parti.split(",")
+    if "dem" in parti:
+        print("Quota Copernicus 30 m...", flush=True)
+        dem = scarica_dem()
+        print(f"  quota: {dem.shape}, min {dem.min():.0f} max {dem.max():.0f} m, punti a 0 m: {np.mean(dem <= 0):.1%}", flush=True)
+        n = scrivi_dataset(Path(a.out) / "topo_cop30", np.clip(np.rint(np.maximum(dem, 0) / DEM_SCALA), 0, 32767),
+                           DEM_LAT0, DEM_LON0, DEM_PIX, DEM_TASSELLO, False,
+                           "Copernicus DEM GLO-30 (Castelli Romani)", "meters MSL", scala=DEM_SCALA)
+        print(f"Scritti {n} tasselli di quota in {a.out}")
+    if "suolo" in parti:
+        print("Uso del suolo WorldCover 10 m...", flush=True)
+        modis = classi_modis(scarica_suolo())
+        n = scrivi_dataset(Path(a.out) / "landuse_worldcover", modis, LU_LAT0, LU_LON0, LU_PIX, LU_TASSELLO, True,
+                           "ESA WorldCover 2021 tradotto in classi MODIS (Castelli Romani)", "category")
+        classi = dict(zip(*np.unique(modis, return_counts=True)))
+        print(f"Scritti {n} tasselli di suolo in {a.out}")
+        print("  suolo (classi MODIS): " + ", ".join(f"{int(k)}:{v / modis.size:.1%}" for k, v in classi.items()))
 
 
 if __name__ == "__main__":

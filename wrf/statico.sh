@@ -20,13 +20,14 @@ TOPO=$(find "$GEOG" -maxdepth 3 -type d -name topo_gmted2010_30s | head -n1)
 GEOG_PATH=$(dirname "$TOPO")
 echo "dati geografici in: $GEOG_PATH"; ls "$GEOG_PATH"
 
-# quota 30 m (Copernicus) e uso del suolo 10 m (WorldCover) al posto dei dati di serie (900 m / 500 m); DATI_FINI=0 li esclude
-DATI_FINI=${DATI_FINI:-1}
+# quota 30 m (Copernicus) e/o uso del suolo 10 m (WorldCover) al posto dei dati di serie (900 m / 500 m).
+# DATI_FINI: "dem,suolo" (default), "dem", "suolo" oppure "0" per nessuno
+DATI_FINI=${DATI_FINI:-dem,suolo}
 RES=default
-if [ "$DATI_FINI" = 1 ]; then
-  echo "== quota 30 m e uso del suolo 10 m"
+if [ "$DATI_FINI" != 0 ]; then
+  echo "== dati fini: $DATI_FINI"
   python3 -m pip install --quiet rasterio numpy scipy
-  python3 "$QUI/dati_fini.py" --out "$GEOG_PATH"
+  python3 "$QUI/dati_fini.py" --out "$GEOG_PATH" --parti "$DATI_FINI"
   RES=fine+default
 fi
 
@@ -34,8 +35,8 @@ W=$HOME/lavoro-geogrid
 rm -rf "$W"; mkdir -p "$W"
 cp -aL "$INSTALL/WPS/." "$W/"
 cd "$W"
-if [ "$DATI_FINI" = 1 ]; then
-  python3 "$QUI/dati_fini.py" --tabella geogrid/GEOGRID.TBL
+if [ "$DATI_FINI" != 0 ]; then
+  python3 "$QUI/dati_fini.py" --tabella geogrid/GEOGRID.TBL --parti "$DATI_FINI"
 fi
 python3 "$QUI/config.py" wps --ciclo 2026010100 --ore 6 --geog "$GEOG_PATH" --res "$RES" > namelist.wps
 ./geogrid.exe > geogrid.log 2>&1 || { tail -n 60 geogrid.log; exit 1; }
