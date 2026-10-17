@@ -580,8 +580,37 @@ def livelli(campo, n=9, span_min=0.0, massimo=None):
     return lv
 
 
+_CONFINI = None
+FILE_CONFINI = Path(__file__).resolve().parent / "dati" / "confini.json"
+
+
+def carica_confini():
+    """(linee dei comuni, linee delle province), ognuna array (n, 2) lon/lat. Il file lo fa wrf/prepara_confini.py dai
+    confini ISTAT; se manca le mappe escono senza confini."""
+    global _CONFINI
+    if _CONFINI is None:
+        try:
+            d = json.loads(FILE_CONFINI.read_text(encoding="utf-8"))
+            _CONFINI = ([np.array(l) for c in d["comuni"] for l in c["linee"]],
+                        [np.array(l) for p in d["province"] for l in p["linee"]])
+        except (OSError, ValueError, KeyError) as e:
+            print(f"Confini non disponibili ({FILE_CONFINI.name}: {e}): mappe senza confini", file=sys.stderr)
+            _CONFINI = ([], [])
+    return _CONFINI
+
+
+def disegna_confini(ax):
+    """Confini comunali (linea molto fine) e provinciali (fine, un po' più scura)."""
+    comuni, province = carica_confini()
+    for a in comuni:
+        ax.plot(a[:, 0], a[:, 1], color=INK, lw=0.35, alpha=0.5, zorder=3, solid_joinstyle="round")
+    for a in province:
+        ax.plot(a[:, 0], a[:, 1], color=INK, lw=0.9, alpha=0.85, zorder=3.5, solid_joinstyle="round")
+
+
 def decora(ax, z_f, lat_f, lon_f):
     halo = [pe.withStroke(linewidth=3, foreground=SFONDO)]
+    disegna_confini(ax)
     ax.contour(lon_f, lat_f, z_f, levels=np.arange(200, 1200, 200), colors=TENUE,
                linewidths=0.6, alpha=0.8, zorder=2)
     for _, la, lo, rla, rlo in LAGHI:

@@ -73,6 +73,31 @@ assert r.returncode != 0 and "NUM_METGRID_SOIL_LEVELS" in r.stderr, r
 print("met_em ok")
 EOF
 
+passo "confini comunali e provinciali: Velletri e Frascati dentro, tre province, linee disegnate"
+python3 - <<'EOF'
+import json, sys
+sys.path.insert(0, ".")
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import previsioni_castelli as pc
+d = json.load(open("dati/confini.json"))
+assert "CC BY" in d["fonte"], "fonte mancante"
+nomi = {c["nome"] for c in d["comuni"]}
+assert {"Velletri", "Frascati", "Marino", "Albano Laziale", "Lanuvio", "Nemi"} <= nomi, sorted(nomi)
+assert {p["nome"] for p in d["province"]} >= {"Roma", "Latina"}, d["province"]
+assert len(d["comuni"]) >= 40
+fig, ax = plt.subplots()
+ax.set_xlim(pc.LON_MIN, pc.LON_MAX)
+ax.set_ylim(pc.LAT_MIN, pc.LAT_MAX)
+n0 = len(ax.lines)
+pc.disegna_confini(ax)
+sottili = [l for l in ax.lines[n0:] if l.get_linewidth() < 0.5]
+spessi = [l for l in ax.lines[n0:] if 0.5 <= l.get_linewidth() < 1.5]
+assert len(sottili) > 50 and len(spessi) >= 2, (len(sottili), len(spessi))
+print(f"confini ok: {len(d['comuni'])} comuni, {len(d['province'])} province")
+EOF
+
 passo "file WRF e geo_em inventati"
 python3 wrf/prova_sintetica.py --out "$T/sint" --geo "$T/geo"
 
