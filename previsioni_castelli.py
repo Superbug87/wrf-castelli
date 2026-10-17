@@ -608,13 +608,40 @@ def disegna_confini(ax):
         ax.plot(a[:, 0], a[:, 1], color=INK, lw=0.9, alpha=0.85, zorder=3.5, solid_joinstyle="round")
 
 
+_LAGHI_VERI = None
+FILE_LAGHI = Path(__file__).resolve().parent / "dati" / "laghi.json"
+
+
+def carica_laghi():
+    """Contorni reali dei laghi (lista di array lon/lat), da dati/laghi.json (wrf/prepara_laghi.py, ESA WorldCover).
+    Se il file manca ritorna None e si disegnano i due cerchi schematici di LAGHI."""
+    global _LAGHI_VERI
+    if _LAGHI_VERI is None:
+        try:
+            d = json.loads(FILE_LAGHI.read_text(encoding="utf-8"))
+            _LAGHI_VERI = [np.array(l["anello"]) for l in d["laghi"]]
+        except (OSError, ValueError, KeyError) as e:
+            print(f"Laghi veri non disponibili ({FILE_LAGHI.name}: {e}): uso i cerchi", file=sys.stderr)
+            _LAGHI_VERI = []
+    return _LAGHI_VERI
+
+
+def disegna_laghi(ax):
+    veri = carica_laghi()
+    if veri:
+        for a in veri:
+            ax.fill(a[:, 0], a[:, 1], fc="#cde2fb", ec=BLU, lw=0.7, zorder=5, joinstyle="round")
+    else:
+        for _, la, lo, rla, rlo in LAGHI:
+            ax.add_patch(Ellipse((lo, la), 2 * rlo, 2 * rla, fc="#cde2fb", ec=BLU, lw=0.8, zorder=5))
+
+
 def decora(ax, z_f, lat_f, lon_f):
     halo = [pe.withStroke(linewidth=3, foreground=SFONDO)]
     disegna_confini(ax)
     ax.contour(lon_f, lat_f, z_f, levels=np.arange(200, 1200, 200), colors=TENUE,
                linewidths=0.6, alpha=0.8, zorder=2)
-    for _, la, lo, rla, rlo in LAGHI:
-        ax.add_patch(Ellipse((lo, la), 2 * rlo, 2 * rla, fc="#cde2fb", ec=BLU, lw=0.8, zorder=5))
+    disegna_laghi(ax)
     for nome, la, lo in PAESI:
         ax.plot(lo, la, "o", ms=4, color=INK, mec=SFONDO, mew=0.8, zorder=7)
         ax.text(lo + 0.007, la, nome, fontsize=11, color=INK, va="center", zorder=7, path_effects=halo)
