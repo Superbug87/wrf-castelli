@@ -874,7 +874,8 @@ def definisci_fogli(c):
              scala="vento", fmt="{:.0f}", passo=2, max_fasce=20, frecce=(c["u"] * kmh, c["v"] * kmh),
              nota="linee di flusso, la freccetta dà il verso"),
         dict(nome="raffiche", titolo="Raffiche a 10 m", unita="km/h", dati=None if G is None else G * kmh,
-             scala="vento", fmt="{:.0f}", passo=2, max_fasce=20),
+             scala="vento", fmt="{:.0f}", passo=2, max_fasce=20, frecce=(c["u"] * kmh, c["v"] * kmh),
+             nota="colore: raffica; linee di flusso: direzione del vento medio"),
         dict(nome="pioggia_1h", titolo="Pioggia nell'ultima ora", unita="mm", dati=c["P"], scala="pioggia",
              fmt="{:.1f}", livelli=LIVELLI_PIOGGIA_1H),
         dict(nome="pioggia_3h", titolo="Pioggia nelle ultime 3 ore", unita="mm", dati=c["P3"], scala="pioggia",
@@ -996,7 +997,7 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
             ax.contour(lon_f, lat_f, z_f, levels=np.arange(200, 1200, 200), colors=TENUE,
                        linewidths=0.4, alpha=0.8, zorder=2)
             if frecce is not None:
-                disegna_flusso(ax, lon_f, lat_f, frecce[0][k], frecce[1][k], densita=0.9, spessore=0.45, scala=0.3)
+                disegna_flusso(ax, lon_f, lat_f, frecce[0][k], frecce[1][k], densita=0.55, spessore=0.45, scala=0.3)
             ax.plot(STAZIONE[2], STAZIONE[1], "*", ms=8, color=INK, mec=SFONDO, mew=0.6, zorder=8)
             ax.text(0.96, 0.04, f["fmt"].format(dati[k][iy, ix]), transform=ax.transAxes, ha="right", va="bottom",
                     fontsize=11, weight="bold", color=INK, zorder=9, path_effects=halo)
