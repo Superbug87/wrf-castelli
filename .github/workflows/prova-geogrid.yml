@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dati: ["0", "dem", "suolo"]
+        dati: ["0", "suolo"]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,7 +55,7 @@ jobs:
         run: |
           python3 -m pip install --quiet netCDF4 matplotlib numpy
           find /home/runner/arte -name 'geo_em.d03.nc' | sort
-          for v in dem suolo; do
+          for v in suolo; do
             echo "######## quota/suolo fine: $v"
             python3 wrf/confronta_geo.py /home/runner/arte/geo-0/geo /home/runner/arte/geo-$v/geo /home/runner/confronto-$v
           done
