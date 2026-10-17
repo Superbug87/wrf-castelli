@@ -21,14 +21,20 @@ GEOG_PATH=$(dirname "$TOPO")
 echo "dati geografici in: $GEOG_PATH"; ls "$GEOG_PATH"
 
 # quota 30 m (Copernicus) e/o uso del suolo 10 m (WorldCover) al posto dei dati di serie (900 m / 500 m).
-# DATI_FINI: "dem,suolo" (default), "dem", "suolo" oppure "0" per nessuno
-DATI_FINI=${DATI_FINI:-dem,suolo}
+# DATI_FINI: "suolo" (default), "dem", "dem,suolo" oppure "0" per nessuno.
+# I dati fini coprono solo l'area del dominio a 1 km (suolo) o dei domini a 3 km (quota): geogrid non riempie da solo
+# il resto con i dati di serie, quindi si usano solo per i domini che stanno dentro l'area (vedi RES sotto).
+DATI_FINI=${DATI_FINI:-suolo}
 RES=default
 if [ "$DATI_FINI" != 0 ]; then
   echo "== dati fini: $DATI_FINI"
   python3 -m pip install --quiet rasterio numpy scipy
   python3 "$QUI/dati_fini.py" --out "$GEOG_PATH" --parti "$DATI_FINI"
-  RES=fine+default
+  case "$DATI_FINI" in
+    dem,suolo|suolo,dem) echo "quota e suolo fini insieme non sono supportati (stessa chiave 'fine' con aree diverse)"; exit 1 ;;
+    suolo) RES=default,default,fine+default ;;          # il suolo a 10 m copre solo il dominio a 1 km
+    *dem*) RES=default,fine+default,fine+default ;;      # la quota a 30 m copre i domini a 3 e 1 km
+  esac
 fi
 
 W=$HOME/lavoro-geogrid

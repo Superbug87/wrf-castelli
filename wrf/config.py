@@ -51,7 +51,7 @@ def namelist_wps(inizio, fine, geog, prefisso, sst=False, risoluzione="default")
  j_parent_start    = {", ".join(map(str, starts))},
  e_we              = {", ".join(map(str, D.E))},
  e_sn              = {", ".join(map(str, D.E))},
- geog_data_res     = {_tre(risoluzione, "'{}'")},
+ geog_data_res     = {", ".join(f"'{x}'" for x in (risoluzione.split(",") if "," in risoluzione else [risoluzione] * 3))},
  dx = {D.DX[0]},
  dy = {D.DX[0]},
  map_proj  = 'lambert',
@@ -201,7 +201,7 @@ def main():
     w.add_argument("--geog", default="/percorso/WPS_GEOG")
     w.add_argument("--pilota", choices=["ecmwf", "gfs"], default="ecmwf",
                    help="modello globale da cui WRF prende condizioni iniziali e al contorno")
-    w.add_argument("--res", default="default", help="geog_data_res di geogrid, es. fine+default per quota 30 m e suolo 10 m")
+    w.add_argument("--res", default="default", help="geog_data_res di geogrid: una per tutti i domini oppure tre separate da virgola, es. default,default,fine+default")
     w.add_argument("--sst", action="store_true", help="metgrid usa anche i file SST:* (temperatura del mare ad alta risoluzione)")
     i = sub.add_parser("input")
     i.add_argument("--ciclo", required=True)
