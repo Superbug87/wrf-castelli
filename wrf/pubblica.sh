@@ -2,7 +2,7 @@
 # Pubblica le immagini nel ramo "risultati" del repository:
 #   ultimo/            i fogli di sintesi dell'ultima previsione
 #   archivio/<ciclo>/  i fogli degli ultimi 14 cicli (una settimana)
-#   orarie/            una immagine per ora e variabile degli ultimi 14 cicli (una settimana, ~12 MB l'uno) + indice.json
+#   orarie/            una immagine per ora e variabile degli ultimi 14 cicli (una settimana) + indice.json
 #                      (ultimo ciclo) + cicli.json (elenco dei cicli presenti): li legge la pagina del sito
 # Il ramo viene riscritto con un solo commit a ogni pubblicazione: la storia non si accumula (le immagini pesano).
 # Uso: pubblica.sh CARTELLA_IMMAGINI CICLO
@@ -23,7 +23,7 @@ if [ -f "$IMG/orarie/indice.json" ]; then
   for d in "$IMG"/orarie/*/; do rm -rf "orarie/$(basename "$d")"; cp -r "$d" "orarie/$(basename "$d")"; done
   cp "$IMG/orarie/indice.json" orarie/indice.json
   # si tiene una settimana: 14 cicli (due al giorno). I piu' vecchi spariscono.
-  ls -1d orarie/*/ 2>/dev/null | sort | head -n -14 | xargs -r rm -rf
+  { ls -1d orarie/*/ 2>/dev/null || true; } | sort | head -n -14 | xargs -r rm -rf
   # elenco dei cicli presenti, dal piu' recente: lo legge la pagina del sito per scegliere il run
   python3 - <<'PY'
 import json, os

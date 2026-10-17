@@ -112,8 +112,8 @@ def disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, ciclo, out):
             buf = io.BytesIO()
             fig.savefig(buf, format="png", dpi=DPI, facecolor=pc.SFONDO)
             plt.close(fig)
-            # 128 colori bastano per mappe a fasce piatte: file 3-4 volte più piccoli, uguali all'occhio
-            Image.open(buf).convert("RGB").quantize(colors=128, method=Image.Quantize.MEDIANCUT,
+            # 64 colori bastano per mappe a fasce piatte: file 3 volte più piccoli, uguali all'occhio
+            Image.open(buf).convert("RGB").quantize(colors=64, method=Image.Quantize.MEDIANCUT,
                                                     dither=Image.Dither.NONE).save(
                 cartella / f"{t_utc:%Y%m%d%H}.png", optimize=True)
             totale += 1

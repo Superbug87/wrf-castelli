@@ -136,6 +136,76 @@ z = np.frombuffer(rec(), ">f4").reshape(ny, nx); assert np.allclose(z, k) and po
 print("SST ok")
 EOF
 
+passo "grandezze derivate (wrf/diagnostiche.py): casi con risposta nota"
+python3 - <<'EOF_D'
+import sys
+sys.path.insert(0, "wrf")
+import numpy as np
+import diagnostiche as d
+import config
+# livelli tipo WRF: 40 livelli, atmosfera standard
+z = (np.linspace(0, 1, 40) ** 1.8 * 16000.0)[None, :] + 100.0
+tk = 288.15 - 0.0065 * np.minimum(z, 11000.0) + 0.0 * z
+p = 101325.0 * (tk / 288.15) ** 5.2559
+p[:, z[0] > 11000] = p[0, np.argmax(z[0] > 11000) - 1] * np.exp(-(z[0, z[0] > 11000] - 11000) / 6300)
+# T a 850: attesa vicino a 5 °C in atmosfera standard (1457 m)
+t850 = d.a_pressione(p, tk, 85000.0, t_suolo=tk[:, 0])[0] - 273.15
+assert abs(t850 - 5.0) < 1.0, t850
+# livello sotto il suolo: estrapolazione, più caldo del primo livello se il suolo sta più in alto
+p_alto = p.copy() * 0.80
+t_est = d.a_pressione(p_alto, tk, 85000.0, t_suolo=tk[:, 0])[0]
+assert t_est > tk[0, 0], t_est
+# zero termico: standard a 0 °C = 15,15/0,0065 = 2331 m s.l.m.
+zt = d.zero_termico(tk, z)[0]
+assert abs(zt - 2331 - 0) < 120, zt
+assert d.zero_termico(tk + 80, z)[0] == z[0, -1]
+assert d.zero_termico(tk - 30, z)[0] < z[0, 0]                      # già sotto zero a terra: sotto il suolo, ma non negativo
+# nuvole: strato basso al 100 % -> totale 1; due strati al 50 % in alto -> totale 0,75 (casuale), non 1
+cf = np.zeros_like(z); psfc = p[:, 0]
+cf[0, 5] = 1.0
+n = d.nuvolosita(cf, p, psfc)
+assert abs(n["nubi_tot"][0] - 100) < 1e-6 and abs(n["nubi_bassa"][0] - 100) < 1e-6
+assert n["nubi_media"][0] < 1e-6 and n["nubi_alta"][0] < 1e-6, n
+cf[:] = 0; cf[0, 30] = 0.5; cf[0, 32] = 0.5
+n = d.nuvolosita(cf, p, psfc)
+assert 50 < n["nubi_tot"][0] <= 76 and n["nubi_alta"][0] > 40 and n["nubi_bassa"][0] < 1e-6, n
+# vento che ruota in senso orario con la quota (profilo tipico da supercella): SRH > 0; ruotato al contrario: SRH < 0
+zagl = (z - 100.0)
+def profilo(segno):
+    ang = segno * np.clip(zagl / 6000.0, 0, 1) * np.pi / 2           # 90° di rotazione in 6 km
+    vel = 8.0 + 20.0 * np.clip(zagl / 6000.0, 0, 1)
+    return -vel * np.sin(ang + np.pi), -vel * np.cos(ang + np.pi)
+risultati = {}
+for segno in (1, -1):
+    u, v = profilo(segno)
+    U, V = d.vento_a_quote(u, v, zagl, u[:, 0], v[:, 0])
+    risultati[segno] = d.shear_srh(U, V)
+    assert risultati[segno]["shear_06"][0] > 15 and risultati[segno]["shear_01"][0] < risultati[segno]["shear_06"][0]
+# il vento che gira in senso orario con la quota (ingrediente delle supercelle) da' SRH grande e positiva;
+# in senso antiorario il "right-mover" non trova elicita': quasi nulla o negativa
+assert risultati[1]["srh_03"][0] > 100 and risultati[1]["srh_01"][0] > 30, risultati[1]
+assert risultati[-1]["srh_03"][0] < 20 and risultati[-1]["srh_01"][0] < 5, risultati[-1]
+# vento uniforme: shear 0 e SRH 0
+u = np.full_like(z, 10.0); v = np.zeros_like(z)
+r = d.shear_srh(*d.vento_a_quote(u, v, zagl, u[:, 0], v[:, 0]))
+assert r["shear_06"][0] < 1e-6 and abs(r["srh_03"][0]) < 1e-6
+# raffica: aria neutra -> vento + 7,71 u*; neve: 1 mm a -10 °C ~ 1,45 cm, a +5 °C nulla
+rf = d.raffica_turbolenta(np.array([5.0]), np.array([0.5]), np.array([800.0]), np.array([0.0]), np.array([285.0]), np.array([1e5]))
+assert abs(rf[0] - (5.0 + 7.71 * 0.5)) < 1e-6, rf
+assert d.raffica_turbolenta(np.array([5.0]), np.array([0.5]), np.array([1500.0]), np.array([200.0]), np.array([300.0]), np.array([1e5]))[0] > rf[0]
+assert abs(d.neve_cm(np.array([1.0]), np.array([263.15]))[0] - 1.45) < 0.1
+assert d.neve_cm(np.array([1.0]), np.array([278.15]))[0] == 0
+# indici di rischio: 0 senza ingredienti, monotoni
+assert d.indice_supercella(np.array([0.0]), np.array([0.0]), np.array([300.0]), np.array([30.0]))[0] == 0
+a = d.indice_supercella(np.array([1500.0]), np.array([-20.0]), np.array([150.0]), np.array([20.0]))[0]
+b = d.indice_supercella(np.array([3000.0]), np.array([-20.0]), np.array([300.0]), np.array([30.0]))[0]
+assert 0 < a < b, (a, b)
+# il passo di calcolo divide i tempi dei segmenti e delle uscite
+for s in (57600, 10800, 3600):
+    assert s % config.TIME_STEP == 0, (s, config.TIME_STEP)
+print("diagnostiche ok")
+EOF_D
+
 passo "mappe da wrfout inventati"
 python3 wrf/postprocess.py --uscite "$T/sint" --out "$T/mappe" --ciclo 2026101600 --senza-stazioni --da-ora 2026-10-16T08:00
 [ "$(find "$T/mappe" -maxdepth 1 -name '*.png' | wc -l)" -ge 9 ] || { echo "mancano mappe"; exit 1; }

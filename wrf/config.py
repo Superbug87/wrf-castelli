@@ -99,6 +99,7 @@ def namelist_input(inizio, fine, riprendi, nlev, nsoil, obs_minuti=None, obs_ven
     t += " io_form_history = 2,\n io_form_restart = 2,\n io_form_input = 2,\n io_form_boundary = 2,\n"
     t += " history_outname = 'wrfout_d<domain>_<date>',\n"
     # massimi orari (tra cui il vento a 10 m) per stimare le raffiche
+    t += " nwp_diagnostics = 1,\n"       # massimi orari: vento a 10 m, corrente ascendente, graupel, elicità
     t += " output_diagnostics = 1,\n auxhist3_outname = 'wrfxtrm_d<domain>_<date>',\n"
     t += riga("auxhist3_interval", [60] * 3)
     t += riga("frames_per_auxhist3", [1000] * 3)
@@ -128,6 +129,7 @@ def namelist_input(inizio, fine, riprendi, nlev, nsoil, obs_minuti=None, obs_ven
     t += riga("radt", [10, 6, 3])
     t += riga("sf_sfclay_physics", [1] * 3) + riga("sf_surface_physics", [2] * 3)  # Noah
     t += riga("bl_pbl_physics", [1] * 3) + riga("bldt", [0] * 3)           # YSU
+    t += riga("lightning_option", [0, 0, 3])                # indice di potenziale di fulmini (LPI) solo nel dominio fine
     t += riga("cu_physics", [1, 0, 0]) + riga("cudt", [0] * 3)             # convezione esplicita da 3 km
     t += riga("topo_wind", [1] * 3)
     t += riga("slope_rad", [0, 0, 1]) + riga("topo_shading", [0, 0, 1])

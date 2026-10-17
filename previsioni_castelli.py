@@ -506,6 +506,14 @@ FASCE = {
     "pioggia": ["#d2ecf8", "#9bd3f2", "#58aeea", "#2f7fda", "#2a4fc0", "#22a9a0", "#37b95a", "#9fd33f", "#f2e03a",
                 "#f6b333", "#f0752c", "#d93a2d", "#b0238c", "#701c9e"],
     "cape": ["#d4eccb", "#97d98f", "#54c05f", "#e4df3a", "#f5a73b", "#e2452e", "#b3226f", "#5c1a8c"],
+    # quota dello zero termico: bassa = viola/blu (freddo), alta = arancio/rosso
+    "zero": ["#5a2d82", "#3a6fd8", "#3fa7e0", "#46c3d6", "#3dbb8c", "#6fcb4b", "#bfe03a", "#f5e03a", "#f7b733",
+             "#f58a2e", "#ee5a2a", "#d62f2a"],
+    "nubi": ["#eef2f6", "#d9e0e8", "#c2ccd8", "#a9b5c4", "#8f9db0", "#76859b", "#5e6e85", "#48566b", "#333f52"],
+    "neve": ["#e1f2fb", "#bcdff4", "#8fc5ec", "#62a3de", "#3d7bcc", "#4a58b9", "#6c41a9", "#98309b", "#c92f86", "#e8508a"],
+    "cin": ["#e7e3f3", "#c6bde4", "#a395d3", "#8068c2", "#5f3fae", "#3f2380", "#241254"],
+    "shear": ["#f6efb2", "#f2d35c", "#f1a73a", "#ea7430", "#d9422f", "#b5233f", "#8a1d7a", "#52176f"],
+    "rischio": ["#bfe3b4", "#7fcf6f", "#e4df3a", "#f5a73b", "#e2452e", "#b3226f", "#5c1a8c"],
 }
 # pressione: la variazione sul dominio è di pochi hPa, quindi la scala segue i valori del giorno
 ARCOBALENO = ["#4b3a9e", "#3a73c9", "#3fb0c7", "#5fc47f", "#c3dc58", "#f5d83f", "#f29a33", "#d9432f"]
@@ -862,14 +870,26 @@ def somma_mobile(P, n):
     return out
 
 
+LIVELLI_CAPE = [50, 100, 250, 500, 1000, 1500, 2000, 3000, 4000]
+NOTA_RISCHIO = "indice, non probabilità: da 1 in su l'ambiente è favorevole"
+
+
 def definisci_fogli(c):
     kmh = 3.6
     G = c.get("G")
-    return [
+    fogli = [
         dict(nome="temperatura_2m", titolo="Temperatura a 2 m", unita="°C", dati=c["T"], scala="temp",
              fmt="{:.0f}", passo=1, max_fasce=24),
+        dict(nome="temperatura_925", titolo="Temperatura a 925 hPa", unita="°C", dati=c.get("T925"),
+             scala="temp", fmt="{:.0f}", passo=1, max_fasce=24, nota="circa 750 m di quota", opzionale=True),
         dict(nome="temperatura_850", titolo="Temperatura a 850 hPa", unita="°C", dati=c.get("T850"),
              scala="temp", fmt="{:.0f}", passo=1, max_fasce=24, nota="circa 1500 m di quota"),
+        dict(nome="zero_termico", titolo="Quota dello zero termico", unita="m", dati=c.get("zero_t"), scala="zero",
+             fmt="{:.0f}", livelli=[0, 250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000],
+             nota="m sul livello del mare; se l'aria al suolo è sotto zero è la quota teorica, anche sotto il suolo",
+             opzionale=True),
+        dict(nome="umidita", titolo="Umidità relativa", unita="%", dati=c["RH"], scala="umid", fmt="{:.0f}",
+             passo=5, massimo=100),
         dict(nome="vento_medio", titolo="Vento medio a 10 m", unita="km/h", dati=np.hypot(c["u"], c["v"]) * kmh,
              scala="vento", fmt="{:.0f}", passo=2, max_fasce=20, frecce=(c["u"] * kmh, c["v"] * kmh),
              nota="linee di flusso, la freccetta dà il verso"),
@@ -882,13 +902,73 @@ def definisci_fogli(c):
              fmt="{:.1f}", livelli=[0.2, 0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 60, 80]),
         dict(nome="pioggia_6h", titolo="Pioggia nelle ultime 6 ore", unita="mm", dati=c["P6"], scala="pioggia",
              fmt="{:.1f}", livelli=[0.5, 1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128]),
+        dict(nome="pioggia_12h", titolo="Pioggia nelle ultime 12 ore", unita="mm", dati=c.get("P12"), scala="pioggia",
+             fmt="{:.1f}", livelli=[1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256], opzionale=True),
+        dict(nome="pioggia_24h", titolo="Pioggia nelle ultime 24 ore", unita="mm", dati=c.get("P24"), scala="pioggia",
+             fmt="{:.1f}", livelli=[1, 2, 5, 10, 15, 20, 30, 40, 60, 80, 120, 160, 240, 320],
+             nota="all'inizio, solo le ore già calcolate", opzionale=True),
+        dict(nome="neve_6h", titolo="Neve fresca nelle ultime 6 ore", unita="cm", dati=c.get("N6"), scala="neve",
+             fmt="{:.1f}", livelli=[0.1, 0.5, 1, 2, 5, 10, 15, 20, 30, 50],
+             nota="dalla precipitazione solida del modello, sotto i 3 °C", opzionale=True,
+             vuoto_se=0.1, vuoto_msg="Nessuna neve prevista"),
+        dict(nome="neve_24h", titolo="Neve fresca nelle ultime 24 ore", unita="cm", dati=c.get("N24"), scala="neve",
+             fmt="{:.1f}", livelli=[0.1, 0.5, 1, 2, 5, 10, 15, 20, 30, 50, 80],
+             nota="dalla precipitazione solida del modello, sotto i 3 °C", opzionale=True,
+             vuoto_se=0.1, vuoto_msg="Nessuna neve prevista"),
         dict(nome="pressione", titolo="Pressione al livello del mare", unita="hPa", dati=c["p"], scala="arcobaleno",
              fmt="{:.0f}", span=4),
-        dict(nome="umidita", titolo="Umidità relativa", unita="%", dati=c["RH"], scala="umid", fmt="{:.0f}",
-             passo=5, massimo=100),
-        dict(nome="cape", titolo="Instabilità (CAPE)", unita="J/kg", dati=c["cape"], scala="cape", fmt="{:.0f}",
-             livelli=[50, 100, 200, 300, 500, 750, 1000, 1500]),
+        dict(nome="nubi_totale", titolo="Copertura nuvolosa totale", unita="%", dati=c.get("nubi_tot"), scala="nubi",
+             fmt="{:.0f}", livelli=[10, 20, 30, 40, 50, 60, 70, 80, 90], opzionale=True),
+        dict(nome="nubi_basse", titolo="Nubi basse", unita="%", dati=c.get("nubi_bassa"), scala="nubi",
+             fmt="{:.0f}", livelli=[10, 20, 30, 40, 50, 60, 70, 80, 90], nota="dal suolo a circa 2 km", opzionale=True),
+        dict(nome="nubi_medie", titolo="Nubi medie", unita="%", dati=c.get("nubi_media"), scala="nubi",
+             fmt="{:.0f}", livelli=[10, 20, 30, 40, 50, 60, 70, 80, 90], nota="da circa 2 a 6 km", opzionale=True),
+        dict(nome="nubi_alte", titolo="Nubi alte", unita="%", dati=c.get("nubi_alta"), scala="nubi",
+             fmt="{:.0f}", livelli=[10, 20, 30, 40, 50, 60, 70, 80, 90], nota="oltre circa 6 km", opzionale=True),
     ]
+    if "cape_mu" in c:
+        fogli += [
+            dict(nome="cape_mu", titolo="CAPE della parcella più instabile", unita="J/kg", dati=c["cape_mu"],
+                 scala="cape", fmt="{:.0f}", livelli=LIVELLI_CAPE, nota="parcella dai primi 300 hPa sopra il suolo"),
+            dict(nome="cape_ml", titolo="CAPE dello strato mescolato", unita="J/kg", dati=c["cape_ml"],
+                 scala="cape", fmt="{:.0f}", livelli=LIVELLI_CAPE, nota="parcella media dei primi 100 hPa"),
+            dict(nome="cin", titolo="Inibizione convettiva (CIN)", unita="J/kg", dati=c["cin"], scala="cin",
+                 fmt="{:.0f}", livelli=[10, 25, 50, 100, 150, 200, 300],
+                 nota="strato mescolato, solo dove c'è CAPE; più alta = temporali più difficili da innescare"),
+        ]
+    else:                                                 # dati senza le parcelle (Open-Meteo): solo il CAPE di superficie
+        fogli.append(dict(nome="cape", titolo="Instabilità (CAPE)", unita="J/kg", dati=c.get("cape"), scala="cape",
+                          fmt="{:.0f}", livelli=[50, 100, 200, 300, 500, 750, 1000, 1500]))
+    fogli += [
+        dict(nome="shear_01", titolo="Shear del vento 0-1 km", unita="m/s", dati=c.get("shear_01"), scala="shear",
+             fmt="{:.0f}", livelli=[2, 4, 6, 8, 10, 12, 15, 20], nota="differenza di vento tra 10 m e 1 km",
+             opzionale=True),
+        dict(nome="shear_03", titolo="Shear del vento 0-3 km", unita="m/s", dati=c.get("shear_03"), scala="shear",
+             fmt="{:.0f}", livelli=[4, 8, 12, 16, 20, 25, 30, 40], nota="differenza di vento tra 10 m e 3 km",
+             opzionale=True),
+        dict(nome="shear_06", titolo="Shear del vento 0-6 km", unita="m/s", dati=c.get("shear_06"), scala="shear",
+             fmt="{:.0f}", livelli=[6, 10, 14, 18, 22, 26, 30, 40], nota="da 18 m/s in su, temporali organizzati",
+             opzionale=True),
+        dict(nome="srh_01", titolo="Elicità relativa alla tempesta 0-1 km", unita="m²/s²", dati=c.get("srh_01"),
+             scala="shear", fmt="{:.0f}", livelli=[25, 50, 100, 150, 200, 300, 400, 500],
+             nota="SRH, per una tempesta che devia a destra (Bunkers)", opzionale=True),
+        dict(nome="srh_03", titolo="Elicità relativa alla tempesta 0-3 km", unita="m²/s²", dati=c.get("srh_03"),
+             scala="shear", fmt="{:.0f}", livelli=[50, 100, 150, 200, 300, 400, 500, 700],
+             nota="SRH, per una tempesta che devia a destra (Bunkers)", opzionale=True),
+        dict(nome="fulmini", titolo="Rischio fulmini", unita="indice", dati=c.get("fulmini"), scala="rischio",
+             fmt="{:.1f}", livelli=[0.1, 0.25, 0.5, 1, 2, 4, 8],
+             nota="correnti ascendenti, graupel e LPI; 1 = fulmini probabili; non è una probabilità", opzionale=True,
+             vuoto_se=0.1, vuoto_msg="Nessun rischio di fulmini"),
+        dict(nome="supercelle", titolo="Rischio supercelle", unita="indice", dati=c.get("supercelle"), scala="rischio",
+             fmt="{:.1f}", livelli=[0.25, 0.5, 1, 2, 4, 8, 16],
+             nota="SCP e rotazione delle correnti ascendenti; da 1 in su l'ambiente è favorevole; non è una probabilità",
+             opzionale=True, vuoto_se=0.25, vuoto_msg="Nessun rischio di supercelle"),
+        dict(nome="tornado", titolo="Rischio tornado", unita="indice", dati=c.get("tornado"), scala="rischio",
+             fmt="{:.1f}", livelli=[0.1, 0.25, 0.5, 1, 2, 4, 8],
+             nota="STP; da 1 in su l'ambiente è favorevole; il modello non vede il tornado, solo l'ambiente", opzionale=True,
+             vuoto_se=0.1, vuoto_msg="Nessun rischio di tornado"),
+    ]
+    return fogli
 
 
 def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
@@ -903,10 +983,16 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
     fogli = []
     for f in definisci_fogli(c):
         if f["dati"] is None:
-            print(f"Salto «{f['titolo']}»: questo modello non fornisce il dato.", file=sys.stderr)
+            if not f.get("opzionale"):
+                print(f"Salto «{f['titolo']}»: questo modello non fornisce il dato.", file=sys.stderr)
         elif f["nome"].startswith("pioggia") and asciutto:
             if f["nome"] == "pioggia_1h":
-                fogli.append(dict(nome="pioggia", vuoto=True))      # niente pioggia: un solo foglio, senza riquadri
+                fogli.append(dict(nome="pioggia", vuoto=True, titolo="Pioggia nelle prossime 48 ore",
+                                  sotto="ultima ora, 3, 6, 12 e 24 ore", msg="Nessuna pioggia prevista",
+                                  dettaglio=f"Massimo sul dominio: {c['P'].max():.1f} mm in 1 ora, {c['P6'].max():.1f} mm in 6 ore."))
+        elif f.get("vuoto_se") is not None and float(np.nanmax(f["dati"])) < f["vuoto_se"]:
+            fogli.append(dict(nome=f["nome"], vuoto=True, titolo=f"{f['titolo']} ({f['unita']})", sotto="nelle prossime 48 ore",
+                              msg=f["vuoto_msg"], dettaglio=f"Massimo sul dominio: {float(np.nanmax(f['dati'])):.2f} {f['unita']}."))
         else:
             fogli.append(f)
 
@@ -937,11 +1023,9 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
         if f.get("vuoto"):
             H = 2.9 + foot(testo_secco)
             fig = plt.figure(figsize=(W, H), facecolor=SFONDO)
-            intestazione(fig, H, "Pioggia nelle prossime 48 ore", "ultima ora, 3 ore e 6 ore")
-            fig.text(MARG / W, 1 - 1.85 / H, "Nessuna pioggia prevista", fontsize=15, weight="bold", color=INK, va="center")
-            fig.text(MARG / W, 1 - 2.30 / H,
-                     f"Massimo sul dominio: {c['P'].max():.1f} mm in 1 ora, {c['P6'].max():.1f} mm in 6 ore.",
-                     fontsize=11, color=SEC, va="center")
+            intestazione(fig, H, f["titolo"], f["sotto"])
+            fig.text(MARG / W, 1 - 1.85 / H, f["msg"], fontsize=15, weight="bold", color=INK, va="center")
+            fig.text(MARG / W, 1 - 2.30 / H, f["dettaglio"], fontsize=11, color=SEC, va="center")
             fig.text(MARG / W, 1 - 2.95 / H, testo_secco, fontsize=9.5, color=SEC, va="top", linespacing=1.4)
             fig.savefig(percorso, dpi=150, facecolor=SFONDO)
             plt.close(fig)

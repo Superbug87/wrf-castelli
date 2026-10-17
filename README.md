@@ -3,8 +3,9 @@
 Previsione a 48 ore con **WRF** (modello fisico vero) su tre domini annidati centrati sui Castelli Romani
 (41,71 N, 12,73 E): **9 km → 3 km → 1 km**. Parte dai dati aperti di **ECMWF** (IFS 0,25°; GFS è l'alternativa) e gira da sola ogni giorno sui
 server gratuiti di GitHub. Alla fine disegna le stesse mappe di `previsioni_castelli.py`
-(temperatura a 2 m e 850 hPa, vento medio, raffiche, pioggia 1/3/6 h, pressione, umidità, CAPE),
-una ogni 6 ore, e le pubblica nel ramo `risultati`.
+(30 tipi: temperatura a 2 m, 925 e 850 hPa, zero termico, umidità, vento medio, raffiche, pioggia 1/3/6/12/24 h,
+neve 6/24 h, pressione, nuvolosità totale/bassa/media/alta, CAPE (parcella più instabile e strato mescolato), CIN, shear 0-1/0-3/0-6 km,
+elicità 0-1/0-3 km, rischio fulmini, rischio supercelle, rischio tornado), una ogni 6 ore, e le pubblica nel ramo `risultati`.
 
 ## Avvertenze
 - **Progetto personale e sperimentale, non un servizio ufficiale.** Le previsioni sono prodotte in automatico da un modello
@@ -61,7 +62,7 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
 - Ramo **`risultati`** del repository: la cartella `ultimo/` e il suo `README.md` con tutte le immagini
   (si legge bene dall'app GitHub). In `archivio/` ci sono gli ultimi 14 cicli (una settimana).
 - Stesso ramo, cartella **`orarie/`**: una immagine per ogni ora e per ogni tipo di mappa (solo tipo, ora del run e ora
-  della mappa, senza descrizioni), degli ultimi 14 cicli (una settimana, circa 11 MB a ciclo: immagini a 128 colori);
+  della mappa, senza descrizioni), degli ultimi 14 cicli (una settimana: 30 variabili x 49 ore a 64 colori, circa 60-100 KB l'una, circa 1 GB per i 14 cicli);
   `orarie/cicli.json` elenca i cicli presenti, `orarie/<ciclo>/indice.json` variabili e ore di ciascuno. Il ramo viene
   riscritto con un solo commit a ogni pubblicazione, così la storia non cresce.
 - **Sul sito Meteo Velletri**: la pagina `sito/previsioni-wrf.html` (un solo file, senza dipendenze) sfoglia le immagini
@@ -109,8 +110,20 @@ del precedente. Se i segmenti vanno stretti, abbassa `ore_segmento` (massimo 4 s
   temporali: dopo 1-2 ore conta soprattutto WRF. Il radar stesso può sbagliare (echi dei monti, schermature, calibrazione).
   Nella zona dei Castelli negli ultimi 4 giorni non è piovuto, quindi la verifica contro WRF vero non è ancora stata vista.
   Il CSV (`archivio/<ciclo>/radar_verifica.csv`) serve a vedere nel tempo se WRF migliora e a tarare i pesi.
-- **Raffiche = stima**: massimo orario del vento a 10 m (diagnostica di WRF) × 1,4.
-- **CAPE = stima** da parcella di superficie. Controllata contro MetPy su 5 profili: scarti sotto l'1%.
+- **Raffiche = stima**: massimo orario del vento a 10 m di WRF (`nwp_diagnostics`) e raffica «turbolenta» (vento medio + 7,71 u\* f,
+  con f che cresce con l'instabilità, metodo del modello ECMWF, Bechtold e Bidlot 2009); la mappa mostra il più alto dei due.
+  Non ancora tarata sulle raffiche misurate dalle stazioni: si regola con la variabile d'ambiente `WRF_FATTORE_TURBOLENZA` (1 = metodo originale).
+- **CAPE e CIN = stima** calcolate colonna per colonna su tutti i livelli di WRF: parcella più instabile (MU, nei primi 300 hPa) e strato mescolato
+  (ML, 100 hPa), con temperatura virtuale e livello di libera convezione. Controllate contro MetPy su profili simili a quelli di WRF
+  (scarti attorno al 10% per ML, molto meno per MU): è un controllo del calcolo, non della previsione.
+- **Zero termico, T a 925 e 850 hPa**: interpolati in ln p; sotto il suolo si estrapola con 6,5 K/km. **Nuvolosità**: da CLDFRA con
+  sovrapposizione massima-casuale (bassa sigma > 0,8, media 0,45-0,8, alta < 0,45). **Neve fresca**: precipitazione solida di WRF con densità di
+  Hedstrom e Pomeroy (1998), non accumulata sul suolo. **Shear e SRH**: vento a quote fisse sopra il suolo, moto della tempesta di Bunkers.
+- **Rischio fulmini, supercelle e tornado sono INDICI, non probabilità.** Fulmini: LPI di WRF (`lightning_option = 3` nel dominio a 1 km) e corrente
+  ascendente × graupel; supercelle: tipo SCP (CAPE, CIN, SRH 0-3 km, shear 0-6 km); tornado: tipo STP (CAPE e CIN del livello mescolato, base delle nubi,
+  SRH 0-1 km, shear 0-6 km). Nascono su dati degli Stati Uniti e **non sono tarati sull'Italia**: dicono dove le condizioni sono favorevoli,
+  non quanto è probabile l'evento. Un tornado è un fenomeno più piccolo della cella di calcolo: l'indice segnala un ambiente, non prevede un tornado.
+  Ogni mappa lo dichiara in basso.
 - ECMWF (come GFS) ha punti ogni 25 km: l'1 km viene da WRF e dall'orografia, non dal dato di partenza.
 - I dati ECMWF sono quelli *open data* (licenza CC-BY 4.0): per ogni ora si scaricano solo i campi che servono
   (circa 40 MB invece di 140), si ritagliano sull'Italia e si riscrivono con compressione semplice perché
@@ -146,7 +159,7 @@ file delle stazioni (inventate) riletto con le stesse istruzioni di lettura di W
 file `SST` riletto con `rd_intermediate` di WPS,
 radar vero (scarico, posizione sulla mappa, movimento su casi inventati e su pioggia vera) e le due immagini a partire da
 `wrfout` inventati; il confronto con WRF vero non è stato visto,
-CAPE contro MetPy, mappe a partire da file `wrfout` inventati con la stessa struttura di WRF, pubblicazione
+grandezze derivate (`wrf/diagnostiche.py`) su casi con risposta nota, CAPE contro MetPy, mappe a partire da file `wrfout` inventati con la stessa struttura di WRF, pubblicazione
 nel ramo `risultati`, sintassi del workflow (actionlint) e degli script (shellcheck).
 
 Queste prove (tranne la compilazione del ramo ECMWF vero) girano da sole a ogni modifica del codice:
@@ -154,7 +167,7 @@ Queste prove (tranne la compilazione del ramo ECMWF vero) girano da sole a ogni 
 cache di WRF). Si può lanciare anche a mano: `bash wrf/prove.sh` (con `PROVA_RADAR=1` prova anche il radar vero).
 
 **Non provato:** compilazione di WRF e WPS sul server di GitHub, download dei dati geografici NCAR, geogrid, metgrid,
-real.exe, wrf.exe.
+real.exe, wrf.exe, accettazione da parte di WRF di `nwp_diagnostics` e `lightning_option = 3`.
 Il primo avvio potrebbe richiedere qualche correzione: i log escono come artifact.
 Cronaca della prima compilazione su GitHub (16 ottobre 2026):
 1. *Primo run:* fermo per oltre 4 ore, annullato. Causa **quasi certa**: il rilevamento dell'opzione lanciava `./configure < /dev/null | … | head -n1`;
@@ -176,7 +189,7 @@ La chiave della cache parziale (`wrf-src-v1-…`) non dipende dagli script: una 
 - `wrf/dominio.py` — geometria dei tre domini · `wrf/config.py` — namelist di WPS e WRF
 - `wrf/dipendenze.sh`, `costruisci.sh` (a tappe, con avanzamento e guardiano), `statico.sh`, `esegui.sh`, `pubblica.sh`
 - `wrf/scarica_ecmwf.py` + `wrf/Vtable.ECMWF_OD` — dati ECMWF · `wrf/scarica_gfs.py` — alternativa GFS
-- `wrf/postprocess.py` — da `wrfout` alle mappe · `wrf/orarie.py` — una immagine per ora e variabile + `indice.json`
+- `wrf/diagnostiche.py` — CAPE/CIN, shear, SRH, nuvole, zero termico, indici di rischio, raffica e neve, colonna per colonna · `wrf/postprocess.py` — da `wrfout` alle mappe · `wrf/orarie.py` — una immagine per ora e variabile + `indice.json`
 - `sito/previsioni-wrf.html` — pagina per sfogliare le immagini orarie (da caricare sul sito)
 - `wrf/stazioni_wrf.py` — stazioni Wunderground nel formato di WRF per il nudging
 - `wrf/scarica_sst.py` — temperatura del mare MUR nel formato intermedio di WPS (campo `SST`)

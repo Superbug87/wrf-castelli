@@ -38,7 +38,8 @@ def stato(h, lat, lon, hgt, X, Y):
     ora_solare = (h + 1) % 24
     diurno = np.sin(2 * np.pi * (ora_solare - 9) / 24)
     instabile = np.clip(np.sin(np.pi * (ora_solare - 10) / 8), 0, 1)       # pomeriggio più instabile
-    T2 = 291.0 + 5.0 * diurno - 0.0065 * hgt + 0.8 * np.sin(X / 9.0) * np.cos(Y / 7.0)
+    freddo = 8.0 * np.clip((h - 34) / 6.0, 0, 1)                           # irruzione fredda nell'ultimo giorno: un po' di neve in quota
+    T2 = 291.0 + 5.0 * diurno - 0.0065 * hgt + 0.8 * np.sin(X / 9.0) * np.cos(Y / 7.0) - freddo
     td = T2 - 6.0 + 2 * instabile
     e = 611.2 * np.exp(17.62 * (td - 273.15) / (td - 273.15 + 243.12))
     PSFC = (101800.0 - 120 * np.sin(h / 14.0)) * np.exp(-hgt / 8300.0)
@@ -73,7 +74,25 @@ def stato(h, lat, lon, hgt, X, Y):
     qv = rh * 0.622 * es / (p - es)
     qv[0] = Q2
     th = tk * (1e5 / p) ** (RD / 1004.0)
-    return dict(T2=T2, Q2=Q2, PSFC=PSFC, U10=U10, V10=V10, p=p, th=th, qv=qv, z_stag=z_stag, vel=vel)
+
+    # vento in quota: cresce con l'altezza e gira in senso orario (veering), come prima di un temporale organizzato
+    zagl = z_m - hgt
+    vq = vel[None] * (1 + 0.8 * zagl / 1000.0 / (1 + 0.15 * zagl / 1000.0)) + 0.002 * zagl
+    dq = dirz + np.radians(45.0) * np.clip(zagl / 6000.0, 0, 1.5)
+    ue3, ve3 = -vq * np.sin(dq), -vq * np.cos(dq)
+    u3 = ue3 * np.cos(ANGOLO) + ve3 * np.sin(ANGOLO)                        # in assi di griglia
+    v3 = ve3 * np.cos(ANGOLO) - ue3 * np.sin(ANGOLO)
+    # nubi: basse con l'umidità, uno strato medio e dei cirri che vanno e vengono
+    cld = np.clip((rh + 0.12 * np.sin(X / 40.0)[None] - 0.55) / 0.25, 0, 1)
+    cld += 0.7 * np.exp(-((zagl - 5500.0) / 700.0) ** 2) * (0.5 + 0.5 * np.sin(h / 6.0))
+    cld += 0.6 * np.exp(-((zagl - 9500.0) / 900.0) ** 2) * (0.5 + 0.5 * np.sin(h / 11.0 + 1))
+    cld = np.clip(cld, 0, 1)
+    # flussi e strato limite
+    ust = 0.06 * vel + 0.25 * instabile
+    pblh = 150.0 + 1600.0 * instabile
+    hfx = -15.0 + 220.0 * instabile
+    return dict(T2=T2, Q2=Q2, PSFC=PSFC, U10=U10, V10=V10, p=p, th=th, qv=qv, z_stag=z_stag, vel=vel,
+                u3=u3, v3=v3, cld=cld, ust=ust, pblh=pblh, hfx=hfx)
 
 
 def pioggia_cumulata(h, X, Y):
@@ -81,6 +100,17 @@ def pioggia_cumulata(h, X, Y):
     attivo = np.clip((h - 30) / 10.0, 0, 1)
     macchia = np.exp(-((X + 22) ** 2 + (Y + 24) ** 2) / (2 * 9.0 ** 2))
     return 14.0 * attivo ** 1.3 * macchia
+
+
+def neve_cumulata(h, hgt):
+    """Neve inventata sopra i 700 m durante l'irruzione fredda (h da 36 a 46): 5 mm d'acqua."""
+    return 5.0 * np.clip((h - 36) / 10.0, 0, 1) * (hgt > 700)
+
+
+def cella(h, X, Y):
+    """Forma (0-1) del temporale inventato nell'angolo sud-ovest, attivo tra h=30 e h=40."""
+    attivo = float(np.clip(1 - abs(h - 35) / 5.0, 0, 1))
+    return attivo * np.exp(-((X + 60) ** 2 + (Y + 50) ** 2) / (2 * 20.0 ** 2))
 
 
 def scrivi(percorso, ore, tempi_utc, lat, lon, hgt, X, Y, xtrm=False):
@@ -104,9 +134,14 @@ def scrivi(percorso, ore, tempi_utc, lat, lon, hgt, X, Y, xtrm=False):
         f2 = lambda n: ds.createVariable(n, "f4", ("Time", "south_north", "west_east"))
         f3 = lambda n, d="bottom_top": ds.createVariable(n, "f4", ("Time", d, "south_north", "west_east"))
         tv = ds.createVariable("Times", "S1", ("Time", "DateStrLen"))
+        ds.createDimension("west_east_stag", NX + 1)
+        ds.createDimension("south_north_stag", NY + 1)
         var2 = {n: f2(n) for n in ("XLAT", "XLONG", "HGT", "T2", "Q2", "PSFC", "U10", "V10", "COSALPHA",
-                                  "SINALPHA", "RAINC", "RAINNC")}
-        P, PB, T, QV = f3("P"), f3("PB"), f3("T"), f3("QVAPOR")
+                                  "SINALPHA", "RAINC", "RAINNC", "SNOWNC", "UST", "PBLH", "HFX", "WSPD10MAX",
+                                  "W_UP_MAX", "GRPL_MAX", "UP_HELI_MAX", "LPI")}
+        P, PB, T, QV, CLD = f3("P"), f3("PB"), f3("T"), f3("QVAPOR"), f3("CLDFRA")
+        UU = ds.createVariable("U", "f4", ("Time", "bottom_top", "south_north", "west_east_stag"))
+        VV = ds.createVariable("V", "f4", ("Time", "bottom_top", "south_north_stag", "west_east"))
         PH, PHB = f3("PH", "bottom_top_stag"), f3("PHB", "bottom_top_stag")
         for i, (h, t) in enumerate(zip(ore, tempi_utc)):
             s = stato(h, lat, lon, hgt, X, Y)
@@ -120,6 +155,16 @@ def scrivi(percorso, ore, tempi_utc, lat, lon, hgt, X, Y, xtrm=False):
             P[i], PB[i] = 0.0, s["p"]
             T[i], QV[i] = s["th"] - 300.0, s["qv"]
             PH[i], PHB[i] = 0.0, G0 * s["z_stag"]
+            CLD[i] = s["cld"]
+            u3, v3 = s["u3"], s["v3"]                                        # ai punti di massa; U e V sono sfalsati
+            UU[i] = np.concatenate([u3[:, :, :1], 0.5 * (u3[:, :, :-1] + u3[:, :, 1:]), u3[:, :, -1:]], axis=2)
+            VV[i] = np.concatenate([v3[:, :1], 0.5 * (v3[:, :-1] + v3[:, 1:]), v3[:, -1:]], axis=1)
+            var2["SNOWNC"][i] = neve_cumulata(h, hgt)
+            var2["UST"][i], var2["PBLH"][i], var2["HFX"][i] = s["ust"], s["pblh"], s["hfx"]
+            var2["WSPD10MAX"][i] = s["vel"] * 1.15
+            ce = cella(h, X, Y)                                              # massimi dell'ora nel temporale
+            var2["W_UP_MAX"][i], var2["GRPL_MAX"][i] = 16.0 * ce + 0.5, 6.0 * ce
+            var2["UP_HELI_MAX"][i], var2["LPI"][i] = 120.0 * ce, 5.0 * ce
 
 
 def geo_finti(cartella):

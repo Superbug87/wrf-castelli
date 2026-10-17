@@ -5,18 +5,21 @@ postprocess.py - dal dominio a 1 km di WRF alle stesse mappe a fogli di previsio
   python wrf/postprocess.py --uscite cartella_con_wrfout --out mappe [--ciclo 2026101600]
 
 Legge wrfout_d03_* (e wrfxtrm_d03_*, se ci sono, per le raffiche), calcola le grandezze che WRF non
-scrive già pronte (temperatura a 850 hPa, pressione al livello del mare, umidità, CAPE, pioggia oraria),
+scrive già pronte (vedi diagnostiche.py: temperature a 925 e 850 hPa, zero termico, nuvolosità, CAPE e CIN,
+shear, SRH, indici di rischio, raffiche, neve; qui pressione al livello del mare, umidità, pioggia),
 le ricampiona su una griglia regolare lat/lon di ~0,5 km e disegna un'immagine per variabile.
 
 Stime, da dichiarare sempre:
-  - raffica = massimo orario del vento a 10 m (diagnostica di WRF) x 1,4
-  - CAPE = parcella di superficie, salita pseudoadiabatica integrata a passi (non è wrf-python)
+  - raffica = vento massimo orario (diagnostica di WRF) + termine turbolento tipo ECMWF (7,71 u* f)
+  - CAPE/CIN = parcelle di superficie sollevate a passi (non è wrf-python); MU = la più instabile, ML = strato 100 hPa
+  - rischio fulmini/supercelle/tornado = indici (LPI e correnti ascendenti, SCP, STP), non probabilità
 """
 import argparse
 import glob
 import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -24,95 +27,22 @@ from zoneinfo import ZoneInfo
 os.environ["TZ"] = "Europe/Rome"      # datetime.now() delle funzioni di previsioni_castelli = ora locale
 time.tzset()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
 from netCDF4 import Dataset, chartostring  # noqa: E402
 from scipy.interpolate import LinearNDInterpolator  # noqa: E402
 from scipy.spatial import Delaunay  # noqa: E402
 
+import diagnostiche as dg  # noqa: E402
 import previsioni_castelli as pc  # noqa: E402
 from orarie import disegna_orarie  # noqa: E402
 
-G0, RD, CP, LV, EPS = 9.80665, 287.04, 1004.0, 2.5e6, 0.622
-KAPPA = RD / CP
-FATTORE_RAFFICA = 1.4
-
-
-# ----------------------------------------------------------------------------
-# Fisica di base
-# ----------------------------------------------------------------------------
-def p_sat(T):
-    """Pressione di saturazione (Pa), T in K (Bolton 1980)."""
-    tc = T - 273.15
-    return 611.2 * np.exp(17.67 * tc / (tc + 243.5))
-
-
-def r_sat(T, p):
-    e = p_sat(T)
-    return EPS * e / np.maximum(p - e, 1.0)
-
-
-def td_da_e(e):
-    """Punto di rugiada (K) dalla tensione di vapore e (Pa)."""
-    g = np.log(np.maximum(e, 1e-3) / 611.2)
-    return 243.5 * g / (17.67 - g) + 273.15
-
-
-def salita_umida(T, p_da, p_a, passi=8):
-    """Integra la pseudoadiabatica da p_da a p_a (p_a <= p_da). Tutti array della stessa forma."""
-    def dT_dlnp(t, p):
-        r = r_sat(t, p)
-        return (RD * t + LV * r) / (CP + LV * LV * r * EPS / (RD * t * t))
-
-    T = T.copy()
-    p = p_da.copy()
-    h = np.log(p_a / p_da) / passi
-    for _ in range(passi):
-        k1 = dT_dlnp(T, p)
-        k2 = dT_dlnp(T + 0.5 * h * k1, p * np.exp(0.5 * h))
-        T = T + h * k2
-        p = p * np.exp(h)
-    return T
-
-
-def cape_superficie(p, tk, w, z):
-    """
-    CAPE (J/kg) di una parcella partita dal livello più basso del modello.
-    p (Pa), tk (K), w (rapporto di mescolanza, kg/kg), z (m, livelli di massa): forma (colonne, livelli).
-    """
-    n, nz = p.shape
-    p0, T0, w0 = p[:, 0], tk[:, 0], w[:, 0]
-    e0 = w0 * p0 / (EPS + w0)
-    Td0 = np.minimum(td_da_e(e0), T0)
-    T_lcl = 1.0 / (1.0 / (Td0 - 56.0) + np.log(T0 / Td0) / 800.0) + 56.0
-    p_lcl = p0 * (T_lcl / T0) ** (1.0 / KAPPA)
-
-    Tp = np.empty_like(tk)
-    wp = np.empty_like(tk)
-    Tp[:, 0], wp[:, 0] = T0, w0
-    sopra = np.zeros(n, bool)
-    T_prec, p_prec = T0, p0
-    for k in range(1, nz):
-        pk = p[:, k]
-        secco = pk >= p_lcl
-        T_secco = T0 * (pk / p0) ** KAPPA
-        p_start = np.where(sopra, p_prec, p_lcl)
-        T_start = np.where(sopra, T_prec, T_lcl)
-        T_umido = salita_umida(T_start, p_start, np.minimum(pk, p_start))
-        Tk = np.where(secco, T_secco, T_umido)
-        Tp[:, k] = Tk
-        wp[:, k] = np.where(secco, w0, r_sat(Tk, pk))
-        sopra = ~secco
-        T_prec, p_prec = Tk, pk
-
-    tv_p = Tp * (1 + wp / EPS) / (1 + wp)
-    tv_e = tk * (1 + w / EPS) / (1 + w)
-    b = G0 * (tv_p - tv_e) / tv_e
-    b_med = 0.5 * (b[:, :-1] + b[:, 1:])
-    dz = np.diff(z, axis=1)
-    p_med = 0.5 * (p[:, :-1] + p[:, 1:])
-    valido = (p_med < p_lcl[:, None]) & (p_med > 10000.0) & (b_med > 0)
-    return np.where(valido, b_med * dz, 0.0).sum(axis=1)
+G0, RD, CP, EPS = dg.G0, dg.RD, dg.CP, dg.EPS
+KAPPA = dg.KAPPA
+FATTORE_RAFFICA = 1.4                  # solo se mancano UST/HFX/PBLH (vecchio metodo)
+FATTORE_TURBOLENZA = float(os.environ.get("WRF_FATTORE_TURBOLENZA", "1.0"))   # taratura del termine turbolento delle raffiche
+p_sat, r_sat, td_da_e = dg.p_sat, dg.r_sat, dg.td_da_e
 
 
 # ----------------------------------------------------------------------------
@@ -122,57 +52,98 @@ def tempi_file(ds):
     return [datetime.strptime(str(s).strip(), "%Y-%m-%d_%H:%M:%S") for s in chartostring(ds["Times"][:])]
 
 
-def elabora_wrfout(percorso):
-    """Una sola passata sul file: restituisce i tempi (UTC) e i campi derivati, forma (tempo, y, x)."""
+def _leggi(ds, nome, i):
+    """Un campo del file all'istante i (float64), o None se WRF non lo ha scritto."""
+    if nome not in ds.variables:
+        return None
+    return np.asarray(ds[nome][i], dtype=np.float64)
+
+
+def elabora_istante(percorso, i):
+    """
+    Un istante di un wrfout: ritorna (tempo UTC, campi derivati 2D, campi statici).
+    Un istante per volta: un campo 3D a 2 km pesa 3-4 MB per variabile e il file ha 17 istanti.
+    """
     with Dataset(percorso) as ds:
         ds.set_auto_mask(False)
-        v = lambda nome: np.asarray(ds[nome][:], dtype=np.float64)
-        tempi = tempi_file(ds)
-        nt = len(tempi)
+        L = lambda nome: _leggi(ds, nome, i)
+        tempo = tempi_file(ds)[i]
 
-        T2, Q2, PSFC = v("T2"), v("Q2"), v("PSFC")
-        U10, V10 = v("U10"), v("V10")
-        cosa, sina = v("COSALPHA"), v("SINALPHA")
-        out = {
-            "ue": U10 * cosa - V10 * sina,           # da vento "della griglia" a est/nord
-            "ve": V10 * cosa + U10 * sina,
-            "rain": v("RAINC") + v("RAINNC"),
-        }
-        hgt = v("HGT")
+        T2, Q2, PSFC, hgt = L("T2"), L("Q2"), L("PSFC"), L("HGT")
+        U10, V10 = L("U10"), L("V10")
+        cosa, sina = L("COSALPHA"), L("SINALPHA")
+        ny, nx = T2.shape
+        ue10 = U10 * cosa - V10 * sina                 # da vento "della griglia" a est/nord
+        ve10 = V10 * cosa + U10 * sina
+        out = {"ue": ue10, "ve": ve10, "rain": L("RAINC") + L("RAINNC"), "T2": T2}
+        if "SNOWNC" in ds.variables:
+            out["snow"] = L("SNOWNC")
 
-        # temperatura del punto di rugiada a 2 m
         e = Q2 * PSFC / (EPS + Q2)
-        out["T2"] = T2
         out["Td2"] = np.minimum(td_da_e(e), T2)
         # pressione al livello del mare (riduzione barometrica con temperatura media dello strato)
         tv = T2 * (1 + 0.61 * Q2)
         out["slp"] = PSFC * np.exp(G0 * hgt / (RD * (tv + 0.0065 * hgt / 2))) / 100.0
 
-        # grandezze 3D
-        p = v("P") + v("PB")
-        qv = v("QVAPOR")
-        th = v("T") + 300.0
+        # grandezze 3D, forma (nz, ny, nx); le colonne per diagnostiche.py sono (ny*nx, nz)
+        p = L("P") + L("PB")
+        qv = L("QVAPOR")
+        th = L("T") + 300.0
         if "USE_THETA_M" in ds.ncattrs() and int(ds.getncattr("USE_THETA_M")) == 1:
             th = th / (1 + 1.61 * qv)
         tk = th * (p / 1e5) ** KAPPA
-        ph = (v("PH") + v("PHB")) / G0
-        z = 0.5 * (ph[:, :-1] + ph[:, 1:])
-        nz = p.shape[1]
+        ph = (L("PH") + L("PHB")) / G0
+        z = 0.5 * (ph[:-1] + ph[1:])
+        nz = p.shape[0]
+        col = lambda a: a.reshape(nz, -1).T
+        P_, T_, W_, Z_ = col(p), col(tk), col(qv), col(z)
+        quanti = (ny, nx)
 
-        # temperatura a 850 hPa: interpolazione lineare in ln p tra i due livelli attorno a 850
-        sotto = (p >= 85000.0).sum(axis=1)
-        k1 = np.clip(sotto, 1, nz - 1)[:, None]
-        k0 = k1 - 1
-        p0, p1 = (np.take_along_axis(p, k, 1)[:, 0] for k in (k0, k1))
-        t0, t1 = (np.take_along_axis(tk, k, 1)[:, 0] for k in (k0, k1))
-        out["T850"] = t0 + (t1 - t0) * np.log(85000.0 / p0) / np.log(p1 / p0)
+        out["T925"] = dg.a_pressione(P_, T_, 92500.0, T_[:, 0]).reshape(quanti)
+        out["T850"] = dg.a_pressione(P_, T_, 85000.0, T_[:, 0]).reshape(quanti)
+        out["zero_t"] = dg.zero_termico(T_, Z_).reshape(quanti)
 
-        # CAPE
-        col = lambda a: np.moveaxis(a, 1, -1).reshape(-1, nz)
-        out["cape"] = cape_superficie(col(p), col(tk), col(qv), col(z)).reshape(nt, *T2.shape[1:])
+        cf = L("CLDFRA")
+        if cf is not None:
+            for nome, a in dg.nuvolosita(col(cf), P_, PSFC.ravel()).items():
+                out[nome] = a.reshape(quanti)
 
-        statici = {"lat": v("XLAT")[0], "lon": v("XLONG")[0], "hgt": hgt[0]}
-    return tempi, out, statici
+        par = dg.parcelle(P_, T_, W_, Z_)
+        # vento in quota: da U e V (sfalsati) ai punti di massa, ruotati su est/nord
+        Ust, Vst = L("U"), L("V")
+        u3 = 0.5 * (Ust[:, :, :-1] + Ust[:, :, 1:])
+        v3 = 0.5 * (Vst[:, :-1, :] + Vst[:, 1:, :])
+        ue3, ve3 = u3 * cosa - v3 * sina, v3 * cosa + u3 * sina
+        Uq, Vq = dg.vento_a_quote(col(ue3), col(ve3), Z_ - hgt.reshape(-1, 1), ue10.ravel(), ve10.ravel())
+        sh = dg.shear_srh(Uq, Vq)
+
+        cape_ml = par["cape_ml"]
+        out["cape_mu"] = par["cape_mu"].reshape(quanti)
+        out["cape_ml"] = cape_ml.reshape(quanti)
+        out["cin"] = np.where(cape_ml >= 10.0, par["cin_ml"], 0.0).reshape(quanti)    # la CIN conta dove c'è CAPE
+        for k in ("shear_01", "shear_03", "shear_06", "srh_01", "srh_03"):
+            out[k] = sh[k].reshape(quanti)
+        out["tornado"] = dg.indice_tornado(cape_ml, par["cin_ml"], par["lcl_ml"], sh["srh_01"], sh["shear_06"]).reshape(quanti)
+        scp = dg.indice_supercella(par["cape_mu"], par["cin_mu"], sh["srh_03"], sh["shear_06"]).reshape(quanti)
+        uh = L("UP_HELI_MAX")                    # massimo orario dell'elicità delle correnti ascendenti (WRF, nwp_diagnostics)
+        out["supercelle"] = scp if uh is None else np.maximum(scp, np.clip(uh, 0.0, None) / 75.0)
+        f = dg.indice_fulmini(L("W_UP_MAX"), L("GRPL_MAX"), L("LPI"))
+        if f is not None:
+            out["fulmini"] = f
+
+        # raffica: vento medio massimo dell'ora + termine turbolento
+        ust, pblh, hfx = L("UST"), L("PBLH"), L("HFX")
+        if ust is not None and pblh is not None and hfx is not None:
+            u_med = L("WSPD10MAX")
+            u_med = np.hypot(ue10, ve10) if u_med is None else np.maximum(u_med, np.hypot(ue10, ve10))
+            out["G"] = dg.raffica_turbolenta(u_med, ust, pblh, hfx, T2, PSFC, FATTORE_TURBOLENZA)
+
+        statici = {"lat": L("XLAT"), "lon": L("XLONG"), "hgt": hgt} if i == 0 else None
+    return tempo, {k: np.asarray(a, dtype=np.float32) for k, a in out.items()}, statici
+
+
+def _lavoro(args):
+    return elabora_istante(*args)
 
 
 def raffiche_da_xtrm(cartella):
@@ -189,19 +160,29 @@ def raffiche_da_xtrm(cartella):
     return res
 
 
-def carica(cartella):
+def carica(cartella, processi=None):
     files = sorted(glob.glob(os.path.join(cartella, "**", "wrfout_d03_*"), recursive=True))
     if not files:
         sys.exit(f"Nessun file wrfout_d03_* in {cartella}")
-    frames, statici = {}, None
+    lavori = []
     for f in files:
-        print("leggo", Path(f).name, flush=True)
-        tempi, campi, st = elabora_wrfout(f)
+        with Dataset(f) as ds:
+            n = len(ds.dimensions["Time"])
+        print("leggo", Path(f).name, f"({n} istanti)", flush=True)
+        lavori += [(f, i) for i in range(n)]
+    processi = processi or max(1, min(4, os.cpu_count() or 1))
+    frames, statici = {}, None
+    if processi > 1:
+        with ProcessPoolExecutor(max_workers=processi) as pool:
+            risultati = list(pool.map(_lavoro, lavori))
+    else:
+        risultati = [_lavoro(x) for x in lavori]
+    for t, campi, st in risultati:                    # al riavvio il primo istante è doppio: vale l'ultimo
         statici = statici or st
-        for i, t in enumerate(tempi):                  # al riavvio il primo istante è doppio: vale l'ultimo
-            frames[t] = {k: a[i] for k, a in campi.items()}
+        frames[t] = campi
     tempi = sorted(frames)
-    dati = {k: np.stack([frames[t][k] for t in tempi]) for k in frames[tempi[0]]}
+    chiavi = set.intersection(*(set(frames[t]) for t in tempi))
+    dati = {k: np.stack([frames[t][k] for t in tempi]) for k in sorted(chiavi)}
     return tempi, dati, statici, raffiche_da_xtrm(cartella)
 
 
@@ -230,7 +211,7 @@ def main():
     ap.add_argument("--out", default="mappe")
     ap.add_argument("--ciclo", default="", help="AAAAMMGGHH del ciclo usato, solo per il titolo")
     ap.add_argument("--pilota", default="ecmwf", choices=["ecmwf", "gfs"], help="modello globale usato, solo per il titolo")
-    ap.add_argument("--n", type=int, default=80, help="punti per lato della griglia delle mappe")
+    ap.add_argument("--n", type=int, default=80, help="punti per lato della griglia delle mappe (80 = una cella ogni 0,5 km)")
     ap.add_argument("--senza-stazioni", action="store_true")
     ap.add_argument("--max-stazioni", type=int, default=60)
     ap.add_argument("--senza-orarie", action="store_true", help="non disegnare le immagini orarie (una per ora e variabile)")
@@ -242,18 +223,29 @@ def main():
     roma = ZoneInfo("Europe/Rome")
     tempi = [t.replace(tzinfo=timezone.utc).astimezone(roma).replace(tzinfo=None) for t in tempi_utc]
 
-    # raffica stimata
+    # raffica: dal metodo turbolento (u*, flusso di calore, strato limite) se WRF li ha scritti, altrimenti x 1,4
     vento = np.hypot(dati["ue"], dati["ve"])
     G = None
-    if xtrm:
+    metodo_raffiche = "turbolento"
+    if "G" in dati:
+        G = np.maximum(dati["G"], vento)
+    elif xtrm:
         mx = np.stack([xtrm.get(t, np.zeros_like(vento[0])) for t in tempi_utc])
         G = np.maximum(FATTORE_RAFFICA * mx, vento)
+        metodo_raffiche = "fattore"
     # pioggia oraria (dalle somme cumulate) e T in °C
     P = np.clip(np.diff(dati["rain"], axis=0, prepend=dati["rain"][:1]), 0, None)
     campi_nativi = {
-        "T": dati["T2"] - 273.15, "Td": dati["Td2"] - 273.15, "T850": dati["T850"] - 273.15,
-        "p": dati["slp"], "u": dati["ue"], "v": dati["ve"], "P": P, "cape": dati["cape"],
+        "T": dati["T2"] - 273.15, "Td": dati["Td2"] - 273.15, "T925": dati["T925"] - 273.15, "T850": dati["T850"] - 273.15,
+        "p": dati["slp"], "u": dati["ue"], "v": dati["ve"], "P": P, "zero_t": dati["zero_t"],
     }
+    for k in ("cape_mu", "cape_ml", "cin", "shear_01", "shear_03", "shear_06", "srh_01", "srh_03", "tornado",
+              "supercelle", "fulmini", "nubi_tot", "nubi_bassa", "nubi_media", "nubi_alta"):
+        if k in dati:
+            campi_nativi[k] = dati[k]
+    if "snow" in dati:                                   # neve fresca oraria (cm) dalla precipitazione solida
+        solida = np.clip(np.diff(dati["snow"], axis=0, prepend=dati["snow"][:1]), 0, None)
+        campi_nativi["N"] = dg.neve_cm(solida, dati["T2"])
     if G is not None:
         campi_nativi["G"] = G
 
@@ -261,9 +253,17 @@ def main():
     c, z_f = ricampiona(campi_nativi, statici, lat_f, lon_f)
     c["RH"] = pc.umidita_relativa(c["T"], c["Td"])
     c["G"] = c.get("G")
-    c["P"] = np.clip(c["P"], 0, None)
-    c["cape"] = np.clip(c["cape"], 0, None)
-    c["P3"], c["P6"] = pc.somma_mobile(c["P"], 3), pc.somma_mobile(c["P"], 6)
+    for k in ("P", "cape_mu", "cape_ml", "cin", "shear_01", "shear_03", "shear_06", "srh_01", "srh_03", "tornado",
+              "supercelle", "fulmini", "nubi_tot", "nubi_bassa", "nubi_media", "nubi_alta", "N", "zero_t"):
+        if k in c:
+            c[k] = np.clip(c[k], 0, None)
+    for k in ("nubi_tot", "nubi_bassa", "nubi_media", "nubi_alta"):
+        if k in c:
+            c[k] = np.clip(c[k], 0, 100)
+    for n in (3, 6, 12, 24):
+        c[f"P{n}"] = pc.somma_mobile(c["P"], n)
+    if "N" in c:
+        c["N6"], c["N24"] = pc.somma_mobile(c["N"], 6), pc.somma_mobile(c["N"], 24)
 
     # si parte dall'ora attuale (il modello è partito qualche ora fa)
     ora = datetime.fromisoformat(a.da_ora) if a.da_ora else datetime.now().replace(minute=0, second=0, microsecond=0)
@@ -276,9 +276,13 @@ def main():
     pil = a.pilota.upper()
     ciclo_txt = f"{pil} {a.ciclo[:8]} {a.ciclo[8:]}Z" if a.ciclo else pil
     banner = f"WRF 1 km ({ciclo_txt})"
+    raff_txt = ("Raffiche: stima, vento massimo orario più un termine turbolento tipo ECMWF (7,71 u* f)."
+                if metodo_raffiche == "turbolento" else "Raffiche: stima, massimo orario del vento a 10 m x 1,4.")
     modello_txt = (f"WRF: modello fisico con tre domini annidati (9, 3 e 1 km) alimentato da {pil}; le mappe "
-                   f"sono ricampionate a {2 * pc.MEZZO_LAT * 111.32 / (a.n - 1):.1f} km. "
-                   "Raffiche: stima, massimo orario del vento a 10 m x 1,4. CAPE: stima da parcella di superficie.")
+                   f"sono ricampionate a {2 * pc.MEZZO_LAT * 111.32 / (a.n - 1):.1f} km. {raff_txt} "
+                   "CAPE e CIN: parcelle sollevate dal modello (MU: la più instabile nei primi 300 hPa; ML: strato di 100 hPa). "
+                   "Fulmini, supercelle e tornado sono indici di ambiente favorevole (LPI e correnti ascendenti, SCP, STP): "
+                   "non sono probabilità e non sono tarati sull'Italia.")
 
     fonte = ("ECMWF IFS open data (CC BY 4.0), modificati" if a.pilota == "ecmwf" else "NOAA/NCEP GFS")
     if list(Path(a.uscite).rglob("sst_usata.txt")):
@@ -319,7 +323,7 @@ def main():
     ix = int(np.abs(lon_f - pc.STAZIONE[2]).argmin())
     print(f"Velletri: T {c['T'][:, iy, ix].min():.0f}-{c['T'][:, iy, ix].max():.0f} °C, "
           f"vento max {np.hypot(c['u'], c['v'])[:, iy, ix].max() * 3.6:.0f} km/h, "
-          f"pioggia 6 h max {c['P6'][:, iy, ix].max():.1f} mm, CAPE max {c['cape'][:, iy, ix].max():.0f} J/kg")
+          f"pioggia 6 h max {c['P6'][:, iy, ix].max():.1f} mm, CAPE max {c['cape_mu'][:, iy, ix].max():.0f} J/kg")
 
 
 if __name__ == "__main__":
