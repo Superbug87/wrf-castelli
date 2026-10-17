@@ -1,5 +1,6 @@
 name: Prova geogrid con quota 30 m e suolo 10 m
-# Lancia geogrid due volte (dati di serie e dati fini) su un ramo a scelta e confronta i geo_em. Non tocca le previsioni.
+# Lancia geogrid con i dati di serie, con la sola quota fine e con il solo suolo fine, su un ramo a scelta, e confronta i geo_em.
+# Non tocca le previsioni.
 on:
   workflow_dispatch:
     inputs:
@@ -12,9 +13,13 @@ env:
   WRF_TAG: v4.7.0
   WPS_TAG: v4.7.0
 jobs:
-  prova:
+  geogrid:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        dati: ["0", "dem", "suolo"]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -27,21 +32,34 @@ jobs:
           fail-on-cache-miss: true
       - name: Dipendenze di sistema
         run: bash wrf/dipendenze.sh
-      - name: geogrid con i dati di serie
-        run: |
-          DATI_FINI=0 GEO=$HOME/geo-vecchi bash wrf/statico.sh 2>&1 | tail -n 15
-      - name: geogrid con i dati fini
-        run: |
-          DATI_FINI=1 GEO=$HOME/geo-nuovi bash wrf/statico.sh 2>&1 | tail -n 40
-      - name: Confronto
-        run: |
-          python3 -m pip install --quiet netCDF4 matplotlib numpy
-          python3 wrf/confronta_geo.py $HOME/geo-vecchi $HOME/geo-nuovi $HOME/confronto
+      - name: geogrid (dati fini = ${{ matrix.dati }})
+        run: DATI_FINI=${{ matrix.dati }} GEO=$HOME/geo bash wrf/statico.sh 2>&1 | tail -n 40
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: confronto-geo
+          name: geo-${{ matrix.dati }}
           path: |
-            /home/runner/confronto
-            /home/runner/geo-nuovi
+            /home/runner/geo
             /home/runner/lavoro-geogrid/geogrid.log
+  confronto:
+    needs: geogrid
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ramo }}
+      - uses: actions/download-artifact@v7
+        with:
+          path: /home/runner/arte
+      - name: Confronto
+        run: |
+          python3 -m pip install --quiet netCDF4 matplotlib numpy
+          find /home/runner/arte -name 'geo_em.d03.nc' | sort
+          for v in dem suolo; do
+            echo "######## quota/suolo fine: $v"
+            python3 wrf/confronta_geo.py /home/runner/arte/geo-0/geo /home/runner/arte/geo-$v/geo /home/runner/confronto-$v
+          done
+      - uses: actions/upload-artifact@v6
+        with:
+          name: confronto
+          path: /home/runner/confronto-*
