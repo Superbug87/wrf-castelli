@@ -73,10 +73,6 @@ def disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, ciclo, out):
             return cs
 
         frecce = f.get("frecce")
-        if frecce is not None:
-            scala_fr = max(float(dati.max()), 10.0) / 0.18       # la freccia più lunga misura 0.18 della larghezza
-            s = max(1, len(lon_f) // 9)
-            o = s // 2
 
         # barra dei colori: la stessa per tutte le ore (livelli fissi per variabile)
         for k, (t_loc, t_utc) in enumerate(zip(tempi, tempi_utc)):
@@ -99,8 +95,7 @@ def disegna_orarie(c, z_f, lat_f, lon_f, tempi, tempi_utc, ciclo, out):
             riempi(ax, dati[k])
             pc.decora(ax, z_f, lat_f, lon_f)
             if frecce is not None:
-                ax.quiver(LON[o::s, o::s], LAT[o::s, o::s], frecce[0][k][o::s, o::s], frecce[1][k][o::s, o::s],
-                          color=pc.INK, angles="uv", scale=scala_fr, scale_units="width", width=0.005, zorder=6)
+                pc.disegna_flusso(ax, lon_f, lat_f, frecce[0][k], frecce[1][k], densita=1.2, spessore=0.6, scala=0.3)
 
             asse = fig.add_axes([0, 0, 0.01, 0.01])
             asse.set_visible(False)
