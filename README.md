@@ -185,5 +185,6 @@ La chiave della cache parziale (`wrf-src-v1-…`) non dipende dagli script: una 
   avanzamento, tempo massimo e guardiano della compilazione con comandi inventati
 - `.github/workflows/prova.yml` — prova automatica a ogni modifica
 - `previsioni_castelli.py` — mappe e correzione con le stazioni (usato da `postprocess.py`)
+- Il vento è disegnato come **linee di flusso** (come le carte di Meteociel): linee continue sottili con freccette piene lungo la linea che danno il verso; il colore sotto è la velocità. Si regola con `densita` e `scala` in `disegna_flusso()` (`previsioni_castelli.py`).
 - `dati/confini.json` — confini comunali (linea molto fine) e provinciali (fine) disegnati su tutte le mappe · `wrf/prepara_confini.py` — lo rifà dai confini ISTAT di Openpolis (serve solo se cambiano)
 - `dati/laghi.json` — contorni reali dei laghi (Albano, Nemi e stagni) · `wrf/prepara_laghi.py` — lo rifà da ESA WorldCover

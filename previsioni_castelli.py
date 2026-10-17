@@ -580,6 +580,60 @@ def livelli(campo, n=9, span_min=0.0, massimo=None):
     return lv
 
 
+def disegna_flusso(ax, lon_f, lat_f, u, v, densita=1.5, spessore=0.6, scala=1.0, zorder=6):
+    """Il vento come linee di flusso, come le carte di Meteociel: linee continue sottili con tante freccette piene
+    lungo la linea (una ogni ~18 km x `scala`) che danno il verso. `densita` 1 = circa 30 linee per lato della mappa;
+    `scala` ingrandisce freccette e distanza tra le freccette nei riquadri piccoli."""
+    from matplotlib.collections import PolyCollection
+
+    u = np.ma.masked_invalid(np.asarray(u, float))
+    v = np.ma.masked_invalid(np.asarray(v, float))
+    flusso = ax.streamplot(lon_f, lat_f, u, v, density=densita, color=INK, linewidth=spessore, arrowstyle="-",
+                           integration_direction="both", broken_streamlines=True, zorder=zorder)   # senza le sue frecce (una per linea):
+    # le rifacciamo noi, più fitte e piene
+
+    kx, ky = 111.32 * np.cos(np.radians(LAT0)), 111.32      # km per grado: le freccette si disegnano in km (mappa isotropa)
+    passo, punta, largo = 18.0 * scala, 3.0 * scala, 2.0 * scala
+    triangoli, linea = [], []
+
+    def freccette(pt):
+        pt = np.asarray(pt)
+        if len(pt) < 2:
+            return
+        d = np.hypot(*np.diff(pt, axis=0).T)
+        lungo = np.concatenate([[0.0], np.cumsum(d)])
+        if lungo[-1] < 2 * punta:
+            return
+        # fase diversa per ogni linea (deterministica), così le freccette non si allineano in colonne
+        fase = 0.25 + 0.5 * ((int(pt[0, 0] * 1000) * 31 + int(pt[0, 1] * 1000) * 17) % 100) / 100
+        pos = np.arange(passo * fase, lungo[-1] - punta, passo) if lungo[-1] > passo else [lungo[-1] / 2]
+        def en(t):
+            return np.array([np.interp(t, lungo, pt[:, 0]), np.interp(t, lungo, pt[:, 1])])
+
+        for sc in pos:
+            a_, b_ = en(max(sc - punta / 2, 0.0)), en(min(sc + punta / 2, lungo[-1]))
+            dx, dy = b_ - a_
+            n = np.hypot(dx, dy)
+            if n == 0:
+                continue
+            dx, dy = dx / n, dy / n
+            c = en(sc)
+            tip, base = c + np.array([dx, dy]) * punta / 2, c - np.array([dx, dy]) * punta / 2
+            lato = np.array([-dy, dx]) * largo / 2
+            triangoli.append(np.array([tip, base + lato, base - lato]) / [kx, ky])      # di nuovo in gradi
+
+    for seg in flusso.lines.get_segments():                # una linea di flusso per elemento (nelle versioni vecchie, a pezzetti)
+        pt = list(np.asarray(seg) * [kx, ky])
+        if linea and np.allclose(pt[0], linea[-1], atol=1e-9):
+            linea += pt[1:]
+        else:
+            freccette(linea)
+            linea = pt
+    freccette(linea)
+    if triangoli:
+        ax.add_collection(PolyCollection(triangoli, facecolors=INK, edgecolors="none", zorder=zorder))
+
+
 _CONFINI = None
 FILE_CONFINI = Path(__file__).resolve().parent / "dati" / "confini.json"
 
@@ -674,12 +728,7 @@ def disegna_mappe(c, z_f, lat_f, lon_f, k, tempi, titolo_banner, modello_txt, ou
     def p_vento(ax):
         liv, cols = scala_assoluta("vento", vel, 2, max_fasce=20)
         cs = ax.contourf(LON, LAT, vel, levels=liv, colors=cols, zorder=1)
-        s = max(1, len(lon_f) // 10)
-        rif = 10 if vel.max() < 20 else 20                 # lunghezza della freccia di riferimento
-        q = ax.quiver(LON[::s, ::s], LAT[::s, ::s], uk[::s, ::s], vk[::s, ::s], color=INK, angles="uv",
-                      scale=220 * rif / 20, scale_units="width", width=0.006, zorder=6)
-        ax.quiverkey(q, 0.70, 0.07, rif, f"{rif} km/h", labelpos="E", coordinates="axes",
-                     fontproperties={"size": 10}, labelcolor=INK)
+        disegna_flusso(ax, lon_f, lat_f, uk, vk, densita=1.2, spessore=0.7, scala=0.3)
         return cs, tick_utili(liv)
 
     def p_press(ax):
@@ -823,7 +872,7 @@ def definisci_fogli(c):
              scala="temp", fmt="{:.0f}", passo=1, max_fasce=24, nota="circa 1500 m di quota"),
         dict(nome="vento_medio", titolo="Vento medio a 10 m", unita="km/h", dati=np.hypot(c["u"], c["v"]) * kmh,
              scala="vento", fmt="{:.0f}", passo=2, max_fasce=20, frecce=(c["u"] * kmh, c["v"] * kmh),
-             nota="frecce: verso dove soffia"),
+             nota="linee di flusso, la freccetta dà il verso"),
         dict(nome="raffiche", titolo="Raffiche a 10 m", unita="km/h", dati=None if G is None else G * kmh,
              scala="vento", fmt="{:.0f}", passo=2, max_fasce=20),
         dict(nome="pioggia_1h", titolo="Pioggia nell'ultima ora", unita="mm", dati=c["P"], scala="pioggia",
@@ -929,10 +978,6 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
         intestazione(fig, H, f"{f['titolo']} ({f['unita']})", sotto)
 
         frecce = f.get("frecce")
-        if frecce is not None:
-            scala = max(float(sel.max()), 10.0) / 0.18          # la freccia più lunga misura 0.18 della larghezza
-            s = max(1, len(lon_f) // 5)
-            o = s // 2
 
         for i, k in enumerate(idx):
             r, col = divmod(i, 3)
@@ -951,8 +996,7 @@ def disegna_fogli(c, z_f, lat_f, lon_f, tempi, banner, modello_txt, out):
             ax.contour(lon_f, lat_f, z_f, levels=np.arange(200, 1200, 200), colors=TENUE,
                        linewidths=0.4, alpha=0.8, zorder=2)
             if frecce is not None:
-                ax.quiver(LON[o::s, o::s], LAT[o::s, o::s], frecce[0][k][o::s, o::s], frecce[1][k][o::s, o::s],
-                          color=INK, angles="uv", scale=scala, scale_units="width", width=0.012, zorder=6)
+                disegna_flusso(ax, lon_f, lat_f, frecce[0][k], frecce[1][k], densita=0.9, spessore=0.45, scala=0.3)
             ax.plot(STAZIONE[2], STAZIONE[1], "*", ms=8, color=INK, mec=SFONDO, mew=0.6, zorder=8)
             ax.text(0.96, 0.04, f["fmt"].format(dati[k][iy, ix]), transform=ax.transAxes, ha="right", va="bottom",
                     fontsize=11, weight="bold", color=INK, zorder=9, path_effects=halo)
