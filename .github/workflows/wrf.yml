@@ -2,8 +2,13 @@ name: Previsione WRF Castelli Romani
 
 on:
   schedule:
-    - cron: "40 8 * * *"         # ogni giorno alle 08:40 UTC: il ciclo ECMWF delle 00 UTC è pubblicato verso le 07:35
-    - cron: "50 19 * * *"        # e alle 19:50 UTC: il ciclo delle 12 UTC è pubblicato verso le 19:35 (se non c'è ancora si usa l'ultimo completo)
+    # Il ciclo ECMWF delle 00 UTC è pubblicato verso le 07:35, quello delle 12 UTC verso le 19:35. GitHub a volte ritarda di ore
+    # (o salta) i lanci programmati: per questo ogni ciclo ha un lancio principale e uno di riserva; la riserva non rifà il ciclo
+    # se è già nel ramo risultati (vedi `fatto` in pianifica).
+    - cron: "40 8 * * *"         # ciclo 00 UTC
+    - cron: "20 11 * * *"        # riserva del ciclo 00 UTC
+    - cron: "10 20 * * *"        # ciclo 12 UTC (se non c'è ancora si usa l'ultimo completo)
+    - cron: "30 22 * * *"        # riserva del ciclo 12 UTC
   workflow_dispatch:
     inputs:
       pilota:
@@ -52,6 +57,8 @@ jobs:
   #    A tappe: se la compilazione non finisce (tempo massimo o blocco) il sorgente parziale va in cache
   #    e rilanciando si riprende da dove era arrivata. Il log scrive l'avanzamento ogni 5 minuti.
   costruzione:
+    needs: pianifica
+    if: ${{ needs.pianifica.outputs.fatto != 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 340
     steps:
@@ -159,6 +166,7 @@ jobs:
       pilota: ${{ steps.p.outputs.pilota }}
       ore: ${{ steps.p.outputs.ore }}
       seg: ${{ steps.p.outputs.seg }}
+      fatto: ${{ steps.p.outputs.fatto }}
     steps:
       - uses: actions/checkout@v5
       - name: Scelta del ciclo
@@ -176,12 +184,20 @@ jobs:
           if [ "$SEG" -lt 1 ] || [ $(( (ORE + SEG - 1) / SEG )) -gt 4 ]; then echo "servono al massimo 4 segmenti: alza ore_segmento"; exit 1; fi
           CICLO=${IN_CICLO}
           if [ -z "$CICLO" ]; then CICLO=$(python3 "wrf/scarica_$PILOTA.py" --ore "$ORE" --solo-ciclo); fi
-          { echo "ciclo=$CICLO"; echo "pilota=$PILOTA"; echo "ore=$ORE"; echo "seg=$SEG"; } >> "$GITHUB_OUTPUT"
+          # lancio programmato (anche di riserva): se questo ciclo è già nel ramo risultati non si rifà
+          FATTO=false
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && git fetch -q --depth 1 origin risultati 2>/dev/null \
+             && git ls-tree -r --name-only FETCH_HEAD "archivio/$CICLO" | grep -q .; then
+            FATTO=true
+            echo "Il ciclo $CICLO è già pubblicato: niente da fare."
+          fi
+          { echo "ciclo=$CICLO"; echo "pilota=$PILOTA"; echo "ore=$ORE"; echo "seg=$SEG"; echo "fatto=$FATTO"; } >> "$GITHUB_OUTPUT"
           echo "Pilota $PILOTA, ciclo $CICLO, $ORE ore, segmenti da $SEG ore"
 
   # 4) La previsione, a segmenti in fila (un job non può durare più di 6 ore)
   previsione:
     needs: [pianifica, costruzione, statico]
+    if: ${{ needs.pianifica.outputs.fatto != 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 355
     strategy:
